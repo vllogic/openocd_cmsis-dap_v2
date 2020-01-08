@@ -22,6 +22,8 @@ noinst_LTLIBRARIES += %D%/libtarget.la
 	$(MIPS32_SRC) \
 	$(NDS32_SRC) \
 	$(STM8_SRC) \
+	$(XTENSA_SRC) \
+	$(ESP32_SRC) \
 	$(INTEL_IA32_SRC) \
 	$(ESIRISC_SRC) \
 	%D%/avrt.c \
@@ -144,6 +146,19 @@ NDS32_SRC = \
 STM8_SRC = \
 	%D%/stm8.c
 
+XTENSA_SRC= \
+	%D%/xtensa.c \
+	%D%/xtensa_debug_module.c \
+	%D%/xtensa_algorithm.c \
+	%D%/xtensa_mcore.c \
+	%D%/esp_xtensa.c \
+	%D%/esp_xtensa_apptrace.c
+
+ESP32_SRC= \
+	%D%/esp32.c \
+	%D%/esp32_s2.c \
+ 	%D%/esp32_apptrace.c
+
 INTEL_IA32_SRC = \
 	%D%/quark_x10xx.c \
 	%D%/quark_d20xx.c \
@@ -239,6 +254,17 @@ ESIRISC_SRC = \
 	%D%/lakemont.h \
 	%D%/x86_32_common.h \
 	%D%/arm_cti.h \
+	%D%/xtensa.h \
+	%D%/xtensa_algorithm.h \
+	%D%/xtensa_debug_module.h \
+	%D%/xtensa_mcore.h \
+	%D%/xtensa_regs.h \
+	%D%/xtensa.h \
+	%D%/esp_xtensa.h \
+	%D%/esp_xtensa_apptrace.h \
+	%D%/esp32_apptrace.h \
+	%D%/esp32.h \
+	%D%/esp32_s2.h \
 	%D%/esirisc.h \
 	%D%/esirisc_jtag.h \
 	%D%/esirisc_regs.h \

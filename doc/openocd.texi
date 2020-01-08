@@ -6669,6 +6669,13 @@ by the @command{stm32f1x options_write} or @command{flash protect} commands
 without having to power cycle the target. Not applicable to stm32f1x devices.
 The @var{num} parameter is a value shown by @command{flash banks}.
 @end deffn
+
+@deffn Command {stm32f1x options_load} num
+Generates a special kind of reset to re-load the stm32 option bytes written
+by the @command{stm32f1x options_write} or @command{flash protect} commands
+without having to power cycle the target. Not applicable to stm32f1x devices.
+The @var{num} parameter is a value shown by @command{flash banks}.
+@end deffn
 @end deffn
 
 @deffn {Flash Driver} stm32f2x

@@ -843,8 +843,11 @@ COMMAND_HANDLER(ftdi_handle_set_signal_command)
 
 	switch (*CMD_ARGV[1]) {
 	case '0':
+	/* Falls through */
 	case '1':
+	/* Falls through */
 	case 'z':
+	/* Falls through */
 	case 'Z':
 		/* single character level specifier only */
 		if (CMD_ARGV[1][1] == '\0') {

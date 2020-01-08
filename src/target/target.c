@@ -75,6 +75,10 @@ static int target_gdb_fileio_end_default(struct target *target, int retcode,
 static int target_profiling_default(struct target *target, uint32_t *samples,
 		uint32_t max_num_samples, uint32_t *num_samples, uint32_t seconds);
 
+static size_t target_get_active_core_default(struct target *target);
+static void target_set_active_core_default(struct target *target, size_t core);
+
+
 /* targets */
 extern struct target_type arm7tdmi_target;
 extern struct target_type arm720t_target;
@@ -104,6 +108,8 @@ extern struct target_type hla_target;
 extern struct target_type nds32_v2_target;
 extern struct target_type nds32_v3_target;
 extern struct target_type nds32_v3m_target;
+extern struct target_type esp32_target;
+extern struct target_type esp32_s2_target;
 extern struct target_type or1k_target;
 extern struct target_type quark_x10xx_target;
 extern struct target_type quark_d20xx_target;
@@ -139,6 +145,8 @@ static struct target_type *target_types[] = {
 	&nds32_v2_target,
 	&nds32_v3_target,
 	&nds32_v3m_target,
+	&esp32_target,
+	&esp32_s2_target,
 	&or1k_target,
 	&quark_x10xx_target,
 	&quark_d20xx_target,
@@ -158,6 +166,7 @@ static struct target_event_callback *target_event_callbacks;
 static struct target_timer_callback *target_timer_callbacks;
 LIST_HEAD(target_reset_callback_list);
 LIST_HEAD(target_trace_callback_list);
+LIST_HEAD(target_exit_callback_list);
 static const int polling_interval = 100;
 
 static const Jim_Nvp nvp_assert[] = {
@@ -498,6 +507,19 @@ struct target *get_target(const char *id)
 	return NULL;
 }
 
+/* returns a amount of targets*/
+int get_targets_count()
+{
+	int result = 0;
+	struct target *target = all_targets;
+
+	while (target) {
+		target = target->next;
+		result++;
+	}
+	return result;
+}
+
 /* returns a pointer to the n-th configured target */
 struct target *get_target_by_num(int num)
 {
@@ -764,6 +786,32 @@ const char *target_type_name(struct target *target)
 	return target->type->name;
 }
 
+int target_get_core_count(struct target *target)
+{
+	if (target->type->get_cores_count == NULL) {
+		return 1;
+	}
+	return (*target->type->get_cores_count)(target);
+}
+
+
+int target_get_active_core(struct target *target)
+{
+	if (target->type->get_active_core == NULL) {
+		return 0;
+	}
+	return (*target->type->get_active_core)(target);
+}
+
+void target_set_active_core(struct target *target, int core_id)
+{
+	if (target->type->set_active_core == NULL) {
+		return;
+	}
+	(*target->type->set_active_core)(target, core_id);
+}
+
+
 static int target_soft_reset_halt(struct target *target)
 {
 	if (!target_was_examined(target)) {
@@ -995,7 +1043,7 @@ int target_run_flash_async_algorithm(struct target *target,
 		}
 
 		if (((rp - fifo_start_addr) & (block_size - 1)) || rp < fifo_start_addr || rp >= fifo_end_addr) {
-			LOG_ERROR("corrupted fifo read pointer 0x%" PRIx32, rp);
+			LOG_ERROR("corrupted fifo read pointer 0x%" PRIx32" 0x%" PRIx32" 0x%" PRIx32, rp, fifo_start_addr, fifo_end_addr);
 			break;
 		}
 
@@ -1365,6 +1413,12 @@ static int target_init_one(struct command_context *cmd_ctx,
 	if (target->type->profiling == NULL)
 		target->type->profiling = target_profiling_default;
 
+	if (target->type->get_active_core == NULL)
+		target->type->get_active_core = target_get_active_core_default;
+
+	if (target->type->set_active_core == NULL)
+		target->type->set_active_core = target_set_active_core_default;
+
 	return ERROR_OK;
 }
 
@@ -1519,6 +1573,27 @@ int target_register_timer_callback(int (*callback)(void *priv),
 	return ERROR_OK;
 }
 
+int target_register_exit_callback(int (*callback)(struct target *target, void *priv), void *priv)
+{
+	struct target_exit_callback *entry;
+
+	if (callback == NULL)
+		return ERROR_COMMAND_SYNTAX_ERROR;
+
+	entry = malloc(sizeof(struct target_exit_callback));
+	if (entry == NULL) {
+		LOG_ERROR("error allocating buffer for exit callback entry");
+		return ERROR_COMMAND_SYNTAX_ERROR;
+	}
+
+	entry->callback = callback;
+	entry->priv = priv;
+	list_add(&entry->list, &target_exit_callback_list);
+
+
+	return ERROR_OK;
+}
+
 int target_unregister_event_callback(int (*callback)(struct target *target,
 		enum target_event event, void *priv), void *priv)
 {
@@ -1644,6 +1719,19 @@ int target_call_trace_callbacks(struct target *target, size_t len, uint8_t *data
 	return ERROR_OK;
 }
 
+int target_call_exit_callbacks()
+{
+	struct target_exit_callback *callback;
+
+	struct target *target;
+	for (target = all_targets; target; target = target->next) {
+		list_for_each_entry(callback, &target_exit_callback_list, list)
+			callback->callback(target, callback->priv);
+	}
+
+	return ERROR_OK;
+}
+
 static int target_timer_callback_periodic_restart(
 		struct target_timer_callback *cb, struct timeval *now)
 {
@@ -1716,9 +1804,9 @@ int target_call_timer_callbacks_now(void)
 }
 
 /* Prints the working area layout for debug purposes */
-static void print_wa_layout(struct target *target)
+static void print_wa_layout(struct working_area_config *wa_cfg)
 {
-	struct working_area *c = target->working_areas;
+	struct working_area *c = wa_cfg->areas;
 
 	while (c) {
 		LOG_DEBUG("%c%c " TARGET_ADDR_FMT "-" TARGET_ADDR_FMT " (%" PRIu32 " bytes)",
@@ -1761,9 +1849,9 @@ static void target_split_working_area(struct working_area *area, uint32_t size)
 }
 
 /* Merge all adjacent free areas into one */
-static void target_merge_working_areas(struct target *target)
+static void target_merge_working_areas(struct working_area_config *wa_cfg)
 {
-	struct working_area *c = target->working_areas;
+	struct working_area *c = wa_cfg->areas;
 
 	while (c && c->next) {
 		assert(c->next->address == c->address + c->size); /* This is an invariant */
@@ -1792,10 +1880,10 @@ static void target_merge_working_areas(struct target *target)
 	}
 }
 
-int target_alloc_working_area_try(struct target *target, uint32_t size, struct working_area **area)
+static int alloc_working_area_try_do(struct target *target, struct working_area_config *wa_cfg, uint32_t size, struct working_area **area)
 {
 	/* Reevaluate working area address based on MMU state*/
-	if (target->working_areas == NULL) {
+	if (wa_cfg->areas == NULL) {
 		int retval;
 		int enabled;
 
@@ -1804,22 +1892,22 @@ int target_alloc_working_area_try(struct target *target, uint32_t size, struct w
 			return retval;
 
 		if (!enabled) {
-			if (target->working_area_phys_spec) {
+			if (wa_cfg->phys_spec) {
 				LOG_DEBUG("MMU disabled, using physical "
-					"address for working memory " TARGET_ADDR_FMT,
-					target->working_area_phys);
-				target->working_area = target->working_area_phys;
+					"address for working memory "TARGET_ADDR_FMT,
+					wa_cfg->phys);
+				wa_cfg->area = wa_cfg->phys;
 			} else {
 				LOG_ERROR("No working memory available. "
 					"Specify -work-area-phys to target.");
 				return ERROR_TARGET_RESOURCE_NOT_AVAILABLE;
 			}
 		} else {
-			if (target->working_area_virt_spec) {
+			if (wa_cfg->virt_spec) {
 				LOG_DEBUG("MMU enabled, using virtual "
-					"address for working memory " TARGET_ADDR_FMT,
-					target->working_area_virt);
-				target->working_area = target->working_area_virt;
+					"address for working memory "TARGET_ADDR_FMT,
+					wa_cfg->virt);
+				wa_cfg->area = wa_cfg->virt;
 			} else {
 				LOG_ERROR("No working memory available. "
 					"Specify -work-area-virt to target.");
@@ -1831,21 +1919,21 @@ int target_alloc_working_area_try(struct target *target, uint32_t size, struct w
 		struct working_area *new_wa = malloc(sizeof(*new_wa));
 		if (new_wa) {
 			new_wa->next = NULL;
-			new_wa->size = target->working_area_size & ~3UL; /* 4-byte align */
-			new_wa->address = target->working_area;
+			new_wa->size = wa_cfg->size & ~3UL; /* 4-byte align */
+			new_wa->address = wa_cfg->area;
 			new_wa->backup = NULL;
 			new_wa->user = NULL;
 			new_wa->free = true;
 		}
 
-		target->working_areas = new_wa;
+		wa_cfg->areas = new_wa;
 	}
 
 	/* only allocate multiples of 4 byte */
 	if (size % 4)
 		size = (size + 3) & (~3UL);
 
-	struct working_area *c = target->working_areas;
+	struct working_area *c = wa_cfg->areas;
 
 	/* Find the first large enough working area */
 	while (c) {
@@ -1863,7 +1951,7 @@ int target_alloc_working_area_try(struct target *target, uint32_t size, struct w
 	LOG_DEBUG("allocated new working area of %" PRIu32 " bytes at address " TARGET_ADDR_FMT,
 			  size, c->address);
 
-	if (target->backup_working_area) {
+	if (wa_cfg->backup) {
 		if (c->backup == NULL) {
 			c->backup = malloc(c->size);
 			if (c->backup == NULL)
@@ -1882,9 +1970,19 @@ int target_alloc_working_area_try(struct target *target, uint32_t size, struct w
 	/* user pointer */
 	c->user = area;
 
-	print_wa_layout(target);
+	print_wa_layout(wa_cfg);
 
 	return ERROR_OK;
+}
+
+int target_alloc_working_area_try(struct target *target, uint32_t size, struct working_area **area)
+{
+	return alloc_working_area_try_do(target, &target->working_area_cfg, size, area);
+}
+
+int target_alloc_alt_working_area_try(struct target *target, uint32_t size, struct working_area **area)
+{
+	return alloc_working_area_try_do(target, &target->alt_working_area_cfg, size, area);
 }
 
 int target_alloc_working_area(struct target *target, uint32_t size, struct working_area **area)
@@ -1895,14 +1993,23 @@ int target_alloc_working_area(struct target *target, uint32_t size, struct worki
 	if (retval == ERROR_TARGET_RESOURCE_NOT_AVAILABLE)
 		LOG_WARNING("not enough working area available(requested %"PRIu32")", size);
 	return retval;
-
 }
 
-static int target_restore_working_area(struct target *target, struct working_area *area)
+int target_alloc_alt_working_area(struct target *target, uint32_t size, struct working_area **area)
+{
+	int retval;
+
+	retval = target_alloc_alt_working_area_try(target, size, area);
+	if (retval == ERROR_TARGET_RESOURCE_NOT_AVAILABLE)
+		LOG_WARNING("not enough working area available(requested %"PRIu32")", size);
+	return retval;
+}
+
+static int target_restore_working_area(struct target *target, struct working_area_config *wa_cfg, struct working_area *area)
 {
 	int retval = ERROR_OK;
 
-	if (target->backup_working_area && area->backup != NULL) {
+	if (wa_cfg->backup && area->backup != NULL) {
 		retval = target_write_memory(target, area->address, 4, area->size / 4, area->backup);
 		if (retval != ERROR_OK)
 			LOG_ERROR("failed to restore %" PRIu32 " bytes of working area at address " TARGET_ADDR_FMT,
@@ -1913,7 +2020,7 @@ static int target_restore_working_area(struct target *target, struct working_are
 }
 
 /* Restore the area's backup memory, if any, and return the area to the allocation pool */
-static int target_free_working_area_restore(struct target *target, struct working_area *area, int restore)
+static int target_free_working_area_restore(struct target *target, struct working_area_config *wa_cfg, struct working_area *area, int restore)
 {
 	int retval = ERROR_OK;
 
@@ -1921,7 +2028,7 @@ static int target_free_working_area_restore(struct target *target, struct workin
 		return retval;
 
 	if (restore) {
-		retval = target_restore_working_area(target, area);
+		retval = target_restore_working_area(target, wa_cfg, area);
 		/* REVISIT: Perhaps the area should be freed even if restoring fails. */
 		if (retval != ERROR_OK)
 			return retval;
@@ -1939,24 +2046,29 @@ static int target_free_working_area_restore(struct target *target, struct workin
 	*area->user = NULL;
 	area->user = NULL;
 
-	target_merge_working_areas(target);
+	target_merge_working_areas(wa_cfg);
 
-	print_wa_layout(target);
+	print_wa_layout(wa_cfg);
 
 	return retval;
 }
 
 int target_free_working_area(struct target *target, struct working_area *area)
 {
-	return target_free_working_area_restore(target, area, 1);
+	return target_free_working_area_restore(target, &target->working_area_cfg, area, 1);
+}
+
+int target_free_alt_working_area(struct target *target, struct working_area *area)
+{
+	return target_free_working_area_restore(target, &target->alt_working_area_cfg, area, 1);
 }
 
 /* free resources and restore memory, if restoring memory fails,
  * free up resources anyway
  */
-static void target_free_all_working_areas_restore(struct target *target, int restore)
+static void target_free_all_working_areas_restore(struct target *target, struct working_area_config *wa_cfg, int restore)
 {
-	struct working_area *c = target->working_areas;
+	struct working_area *c = wa_cfg->areas;
 
 	LOG_DEBUG("freeing all working areas");
 
@@ -1964,7 +2076,7 @@ static void target_free_all_working_areas_restore(struct target *target, int res
 	while (c) {
 		if (!c->free) {
 			if (restore)
-				target_restore_working_area(target, c);
+				target_restore_working_area(target, wa_cfg, c);
 			c->free = true;
 			*c->user = NULL; /* Same as above */
 			c->user = NULL;
@@ -1973,32 +2085,41 @@ static void target_free_all_working_areas_restore(struct target *target, int res
 	}
 
 	/* Run a merge pass to combine all areas into one */
-	target_merge_working_areas(target);
+	target_merge_working_areas(wa_cfg);
 
-	print_wa_layout(target);
+	print_wa_layout(wa_cfg);
+}
+
+static void target_free_all_working_areas_do(struct target *target, struct working_area_config *wa_cfg)
+{
+	target_free_all_working_areas_restore(target, wa_cfg, 1);
+	/* Now we have none or only one working area marked as free */
+	if (wa_cfg->areas) {
+		/* Free the last one to allow on-the-fly moving and resizing */
+		free(wa_cfg->areas->backup);
+		free(wa_cfg->areas);
+		wa_cfg->areas = NULL;
+	}
 }
 
 void target_free_all_working_areas(struct target *target)
 {
-	target_free_all_working_areas_restore(target, 1);
+	target_free_all_working_areas_do(target, &target->working_area_cfg);
+}
 
-	/* Now we have none or only one working area marked as free */
-	if (target->working_areas) {
-		/* Free the last one to allow on-the-fly moving and resizing */
-		free(target->working_areas->backup);
-		free(target->working_areas);
-		target->working_areas = NULL;
-	}
+void target_free_all_alt_working_areas(struct target *target)
+{
+	target_free_all_working_areas_do(target, &target->alt_working_area_cfg);
 }
 
 /* Find the largest number of bytes that can be allocated */
-uint32_t target_get_working_area_avail(struct target *target)
+static uint32_t get_working_area_avail_do(struct target *target, struct working_area_config *wa_cfg)
 {
-	struct working_area *c = target->working_areas;
+	struct working_area *c = wa_cfg->areas;
 	uint32_t max_size = 0;
 
 	if (c == NULL)
-		return target->working_area_size;
+		return wa_cfg->size;
 
 	while (c) {
 		if (c->free && max_size < c->size)
@@ -2008,6 +2129,16 @@ uint32_t target_get_working_area_avail(struct target *target)
 	}
 
 	return max_size;
+}
+
+uint32_t target_get_working_area_avail(struct target *target)
+{
+	return get_working_area_avail_do(target, &target->working_area_cfg);
+}
+
+uint32_t target_get_alt_working_area_avail(struct target *target)
+{
+	return get_working_area_avail_do(target, &target->alt_working_area_cfg);
 }
 
 static void target_destroy(struct target *target)
@@ -2052,6 +2183,8 @@ static void target_destroy(struct target *target)
 
 void target_quit(void)
 {
+	target_call_exit_callbacks();
+
 	struct target_event_callback *pe = target_event_callbacks;
 	while (pe) {
 		struct target_event_callback *t = pe->next;
@@ -2103,6 +2236,18 @@ static int target_get_gdb_fileio_info_default(struct target *target,
 	   as target halted every time.  */
 	return ERROR_FAIL;
 }
+
+static size_t target_get_active_core_default(struct target *target)
+{
+	/* If target has only one core.  */
+	return 0;
+}
+
+static void target_set_active_core_default(struct target *target, size_t core)
+{
+
+}
+
 
 static int target_gdb_fileio_end_default(struct target *target,
 		int retcode, int fileio_errno, bool ctrl_c)
@@ -3034,8 +3179,8 @@ int target_wait_state(struct target *target, enum target_state state, int ms)
 			keep_alive();
 
 		if ((cur-then) > ms) {
-			LOG_ERROR("timed out while waiting for target %s",
-				Jim_Nvp_value2name_simple(nvp_target_state, state)->name);
+			LOG_ERROR("timed out while waiting for target %s / %d - %d",
+				Jim_Nvp_value2name_simple(nvp_target_state, state)->name, target->state, state);
 			return ERROR_FAIL;
 		}
 	}
@@ -3137,6 +3282,23 @@ COMMAND_HANDLER(handle_step_command)
 	struct target *target = get_current_target(CMD_CTX);
 
 	return target->type->step(target, current_pc, addr, 1);
+}
+
+COMMAND_HANDLER(handle_set_cpu_command)
+{
+	if ((CMD_ARGC > 1) || (CMD_ARGC < 1))
+		return ERROR_COMMAND_SYNTAX_ERROR;
+
+	LOG_DEBUG("-");
+
+	uint32_t core = 0;
+	if (CMD_ARGC == 1) {
+		COMMAND_PARSE_NUMBER(u32, CMD_ARGV[0], core);
+	}
+
+	struct target *target = get_current_target(CMD_CTX);
+	target->type->set_active_core(target, core);
+	return ERROR_OK;
 }
 
 void target_handle_md_output(struct command_invocation *cmd,
@@ -4604,6 +4766,10 @@ enum target_cfg_param {
 	TCFG_CHAIN_POSITION,
 	TCFG_DBGBASE,
 	TCFG_RTOS,
+	TCFG_ALT_WORK_AREA_VIRT,
+	TCFG_ALT_WORK_AREA_PHYS,
+	TCFG_ALT_WORK_AREA_SIZE,
+	TCFG_ALT_WORK_AREA_BACKUP,
 	TCFG_DEFER_EXAMINE,
 	TCFG_GDB_PORT,
 };
@@ -4620,6 +4786,10 @@ static Jim_Nvp nvp_config_opts[] = {
 	{ .name = "-chain-position",   .value = TCFG_CHAIN_POSITION },
 	{ .name = "-dbgbase",          .value = TCFG_DBGBASE },
 	{ .name = "-rtos",             .value = TCFG_RTOS },
+	{ .name = "-alt-work-area-virt",   .value = TCFG_ALT_WORK_AREA_VIRT },
+	{ .name = "-alt-work-area-phys",   .value = TCFG_ALT_WORK_AREA_PHYS },
+	{ .name = "-alt-work-area-size",   .value = TCFG_ALT_WORK_AREA_SIZE },
+	{ .name = "-alt-work-area-backup", .value = TCFG_ALT_WORK_AREA_BACKUP },
 	{ .name = "-defer-examine",    .value = TCFG_DEFER_EXAMINE },
 	{ .name = "-gdb-port",         .value = TCFG_GDB_PORT },
 	{ .name = NULL, .value = -1 }
@@ -4754,65 +4924,107 @@ no_params:
 			break;
 
 		case TCFG_WORK_AREA_VIRT:
+		case TCFG_ALT_WORK_AREA_VIRT:
 			if (goi->isconfigure) {
-				target_free_all_working_areas(target);
+				target_free_all_working_areas_restore(target, n->value == TCFG_ALT_WORK_AREA_VIRT ?
+					&target->alt_working_area_cfg : &target->working_area_cfg, 1);
 				e = Jim_GetOpt_Wide(goi, &w);
 				if (e != JIM_OK)
 					return e;
-				target->working_area_virt = w;
-				target->working_area_virt_spec = true;
+				if (n->value == TCFG_ALT_WORK_AREA_VIRT) {
+					target->alt_working_area_cfg.virt = w;
+					target->alt_working_area_cfg.virt_spec = true;
+				} else {
+					target->working_area_cfg.virt = w;
+					target->working_area_cfg.virt_spec = true;
+				}
 			} else {
 				if (goi->argc != 0)
 					goto no_params;
 			}
-			Jim_SetResult(goi->interp, Jim_NewIntObj(goi->interp, target->working_area_virt));
+			if (n->value == TCFG_ALT_WORK_AREA_VIRT) {
+				Jim_SetResult(goi->interp, Jim_NewIntObj(goi->interp, target->alt_working_area_cfg.virt));
+			} else {
+				Jim_SetResult(goi->interp, Jim_NewIntObj(goi->interp, target->working_area_cfg.virt));
+			}
 			/* loop for more */
 			break;
 
 		case TCFG_WORK_AREA_PHYS:
+		case TCFG_ALT_WORK_AREA_PHYS:
 			if (goi->isconfigure) {
-				target_free_all_working_areas(target);
+				target_free_all_working_areas_restore(target, n->value == TCFG_ALT_WORK_AREA_VIRT ?
+					&target->alt_working_area_cfg : &target->working_area_cfg, 1);
 				e = Jim_GetOpt_Wide(goi, &w);
 				if (e != JIM_OK)
 					return e;
-				target->working_area_phys = w;
-				target->working_area_phys_spec = true;
+				if (n->value == TCFG_ALT_WORK_AREA_PHYS) {
+					target->alt_working_area_cfg.phys = w;
+					target->alt_working_area_cfg.phys_spec = true;
+				} else {
+					target->working_area_cfg.phys = w;
+					target->working_area_cfg.phys_spec = true;
+				}
 			} else {
 				if (goi->argc != 0)
 					goto no_params;
 			}
-			Jim_SetResult(goi->interp, Jim_NewIntObj(goi->interp, target->working_area_phys));
+			if (n->value == TCFG_ALT_WORK_AREA_PHYS) {
+				Jim_SetResult(goi->interp, Jim_NewIntObj(goi->interp, target->alt_working_area_cfg.phys));
+			} else {
+				Jim_SetResult(goi->interp, Jim_NewIntObj(goi->interp, target->working_area_cfg.phys));
+			}
 			/* loop for more */
 			break;
 
 		case TCFG_WORK_AREA_SIZE:
+		case TCFG_ALT_WORK_AREA_SIZE:
 			if (goi->isconfigure) {
-				target_free_all_working_areas(target);
+				target_free_all_working_areas_restore(target, n->value == TCFG_ALT_WORK_AREA_VIRT ?
+					&target->alt_working_area_cfg : &target->working_area_cfg, 1);
 				e = Jim_GetOpt_Wide(goi, &w);
 				if (e != JIM_OK)
 					return e;
-				target->working_area_size = w;
+				if (n->value == TCFG_ALT_WORK_AREA_SIZE) {
+					target->alt_working_area_cfg.size = w;
+				} else {
+					target->working_area_cfg.size = w;
+				}
 			} else {
 				if (goi->argc != 0)
 					goto no_params;
 			}
-			Jim_SetResult(goi->interp, Jim_NewIntObj(goi->interp, target->working_area_size));
+			if (n->value == TCFG_ALT_WORK_AREA_SIZE) {
+				Jim_SetResult(goi->interp, Jim_NewIntObj(goi->interp, target->alt_working_area_cfg.size));
+			} else {
+				Jim_SetResult(goi->interp, Jim_NewIntObj(goi->interp, target->working_area_cfg.size));
+			}
 			/* loop for more */
 			break;
 
 		case TCFG_WORK_AREA_BACKUP:
+		case TCFG_ALT_WORK_AREA_BACKUP:
 			if (goi->isconfigure) {
-				target_free_all_working_areas(target);
+				target_free_all_working_areas_restore(target, n->value == TCFG_ALT_WORK_AREA_VIRT ?
+					&target->alt_working_area_cfg : &target->working_area_cfg, 1);
 				e = Jim_GetOpt_Wide(goi, &w);
 				if (e != JIM_OK)
 					return e;
 				/* make this exactly 1 or 0 */
-				target->backup_working_area = (!!w);
+				if (n->value == TCFG_ALT_WORK_AREA_BACKUP) {
+					target->alt_working_area_cfg.backup = (!!w);
+				} else {
+					target->working_area_cfg.backup = (!!w);
+				}
 			} else {
 				if (goi->argc != 0)
 					goto no_params;
 			}
-			Jim_SetResult(goi->interp, Jim_NewIntObj(goi->interp, target->backup_working_area));
+			if (n->value == TCFG_ALT_WORK_AREA_BACKUP) {
+				Jim_SetResult(goi->interp, Jim_NewIntObj(goi->interp, target->alt_working_area_cfg.backup));
+			} else {
+				Jim_SetResult(goi->interp, Jim_NewIntObj(goi->interp, target->working_area_cfg.backup));
+			}
 			/* loop for more e*/
 			break;
 
@@ -4864,6 +5076,7 @@ no_params:
 				}
 
 				target_free_all_working_areas(target);
+				target_free_all_alt_working_areas(target);
 				e = Jim_GetOpt_Obj(goi, &o_t);
 				if (e != JIM_OK)
 					return e;
@@ -5100,7 +5313,8 @@ static int jim_target_reset(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
 	/* determine if we should halt or not. */
 	target->reset_halt = !!a;
 	/* When this happens - all workareas are invalid. */
-	target_free_all_working_areas_restore(target, 0);
+	target_free_all_working_areas_restore(target, &target->working_area_cfg, 0);
+	target_free_all_working_areas_restore(target, &target->alt_working_area_cfg, 0);
 
 	/* do the assert */
 	if (n->value == NVP_ASSERT)
@@ -5466,10 +5680,14 @@ static int target_create(Jim_GetOptInfo *goi)
 	/* default to first core, override with -coreid */
 	target->coreid = 0;
 
-	target->working_area        = 0x0;
-	target->working_area_size   = 0x0;
-	target->working_areas       = NULL;
-	target->backup_working_area = 0;
+	target->working_area_cfg.area       = 0x0;
+	target->working_area_cfg.size       = 0x0;
+	target->working_area_cfg.areas      = NULL;
+	target->working_area_cfg.backup     = 0;
+	target->alt_working_area_cfg.area   = 0x0;
+	target->alt_working_area_cfg.size   = 0x0;
+	target->alt_working_area_cfg.areas  = NULL;
+	target->alt_working_area_cfg.backup = 0;
 
 	target->state               = TARGET_UNKNOWN;
 	target->debug_reason        = DBG_REASON_UNDEFINED;
@@ -6394,6 +6612,14 @@ static const struct command_registration target_exec_command_handlers[] = {
 		.mode = COMMAND_EXEC,
 		.help = "Test the target's memory access functions",
 		.usage = "size",
+	},
+
+	{
+		.name = "set_core",
+		.handler = handle_set_cpu_command,
+		.mode = COMMAND_EXEC,
+		.help = "Set active core function",
+		.usage = "set_core N",
 	},
 
 	COMMAND_REGISTRATION_DONE

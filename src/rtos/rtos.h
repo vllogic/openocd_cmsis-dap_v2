@@ -59,6 +59,9 @@ struct rtos {
 	int (*gdb_thread_packet)(struct connection *connection, char const *packet, int packet_size);
 	int (*gdb_target_for_threadid)(struct connection *connection, int64_t thread_id, struct target **p_target);
 	void *rtos_specific_params;
+	void *rtos_specific_data;
+	/*Threads that are currently running on cores of the target*/
+	int32_t* core_running_threads;
 };
 
 struct rtos_reg {
@@ -82,6 +85,8 @@ struct rtos_type {
 	int (*clean)(struct target *target);
 	char * (*ps_command)(struct target *target);
 	int (*set_reg)(struct rtos *rtos, uint32_t reg_num, uint8_t *reg_value);
+	int (*post_reset_cleanup)(struct target *target);
+	void(*set_current_thread)(struct rtos *rtos, int32_t threadid);
 };
 
 struct stack_register_offset {
@@ -106,6 +111,11 @@ struct rtos_register_stacking {
 		const struct rtos_register_stacking *stacking,
 		int64_t stack_ptr);
 	const struct stack_register_offset *register_offsets;
+	/* Some targets have to implement their own stack read function,
+	 * because the stack is formatted weird or needs mangling before
+	 * passing it on to gdb.
+	 */
+	int (*custom_stack_read_fn)(struct target *target, int64_t stack_ptr, const struct rtos_register_stacking *stacking, uint8_t *stack_data);
 };
 
 #define GDB_THREAD_PACKET_NOT_CONSUMED (-40)

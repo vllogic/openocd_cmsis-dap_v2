@@ -124,6 +124,18 @@ enum target_register_class {
 	REG_CLASS_GENERAL,
 };
 
+struct working_area_config {
+	target_addr_t area;				/* working area (initialised RAM). Evaluated
+										 * upon first allocation from virtual/physical address. */
+	bool virt_spec;		/* virtual address specified? */
+	target_addr_t virt;			/* virtual address */
+	bool phys_spec;		/* physical address specified? */
+	target_addr_t phys;			/* physical address */
+	uint32_t size;			/* size in bytes */
+	uint32_t backup;		/* whether the content of the working area has to be preserved */
+	struct working_area *areas;/* list of allocated working areas */
+};
+
 /* target_type.h contains the full definition of struct target_type */
 struct target {
 	struct target_type *type;			/* target type definition (name, access functions) */
@@ -155,15 +167,8 @@ struct target {
 	struct target_event_action *event_action;
 
 	int reset_halt;						/* attempt resetting the CPU into the halted mode? */
-	target_addr_t working_area;				/* working area (initialised RAM). Evaluated
-										 * upon first allocation from virtual/physical address. */
-	bool working_area_virt_spec;		/* virtual address specified? */
-	target_addr_t working_area_virt;			/* virtual address */
-	bool working_area_phys_spec;		/* physical address specified? */
-	target_addr_t working_area_phys;			/* physical address */
-	uint32_t working_area_size;			/* size in bytes */
-	uint32_t backup_working_area;		/* whether the content of the working area has to be preserved */
-	struct working_area *working_areas;/* list of allocated working areas */
+	struct working_area_config	working_area_cfg;
+	struct working_area_config	alt_working_area_cfg;
 	enum target_debug_reason debug_reason;/* reason why the target entered debug state */
 	enum target_endianness endianness;	/* target endianness */
 	/* also see: target_state_name() */
@@ -330,6 +335,12 @@ struct target_timer_callback {
 	struct target_timer_callback *next;
 };
 
+struct target_exit_callback {
+	struct list_head list;
+	void *priv;
+	int (*callback)(struct target *target, void *priv);
+};
+
 struct target_memory_check_block {
 	target_addr_t address;
 	uint32_t size;
@@ -366,6 +377,10 @@ int target_unregister_trace_callback(
 		size_t len, uint8_t *data, void *priv),
 		void *priv);
 
+int target_register_exit_callback(
+		int (*callback)(struct target *target, void *priv),
+		void *priv);
+
 /* Poll the status of the target, detect any error conditions and report them.
  *
  * Also note that this fn will clear such error conditions, so a subsequent
@@ -385,6 +400,7 @@ int target_halt(struct target *target);
 int target_call_event_callbacks(struct target *target, enum target_event event);
 int target_call_reset_callbacks(struct target *target, enum target_reset_mode reset_mode);
 int target_call_trace_callbacks(struct target *target, size_t len, uint8_t *data);
+int target_call_exit_callbacks(void);
 
 /**
  * The period is very approximate, the callback can happen much more often
@@ -404,6 +420,7 @@ struct target *get_target_by_num(int num);
 struct target *get_current_target(struct command_context *cmd_ctx);
 struct target *get_current_target_or_null(struct command_context *cmd_ctx);
 struct target *get_target(const char *id);
+int get_targets_count(void);
 
 /**
  * Get the target type name.
@@ -686,6 +703,8 @@ const char *target_reset_mode_name(enum target_reset_mode reset_mode);
  */
 int target_alloc_working_area(struct target *target,
 		uint32_t size, struct working_area **area);
+int target_alloc_alt_working_area(struct target *target,
+		uint32_t size, struct working_area **area);
 /* Same as target_alloc_working_area, except that no error is logged
  * when ERROR_TARGET_RESOURCE_NOT_AVAILABLE is returned.
  *
@@ -694,9 +713,13 @@ int target_alloc_working_area(struct target *target,
  */
 int target_alloc_working_area_try(struct target *target,
 		uint32_t size, struct working_area **area);
+int target_alloc_alt_working_area_try(struct target *target,
+		uint32_t size, struct working_area **area);
 int target_free_working_area(struct target *target, struct working_area *area);
+int target_free_alt_working_area(struct target *target, struct working_area *area);
 void target_free_all_working_areas(struct target *target);
 uint32_t target_get_working_area_avail(struct target *target);
+uint32_t target_get_alt_working_area_avail(struct target *target);
 
 /**
  * Free all the resources allocated by targets and the target layer
@@ -758,5 +781,14 @@ void target_handle_md_output(struct command_invocation *cmd,
 #define ERROR_TARGET_DUPLICATE_BREAKPOINT (-312)
 
 extern bool get_target_reset_nag(void);
+
+/* Returns the number of CPUs within a target */
+int target_get_core_count(struct target *target);
+
+/* Returns the index of the active CPU */
+int target_get_active_core(struct target *target);
+
+/* Makes given CPU active */
+void target_set_active_core(struct target *target, int core_id);
 
 #endif /* OPENOCD_TARGET_TARGET_H */
