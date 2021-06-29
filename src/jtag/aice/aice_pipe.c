@@ -19,6 +19,8 @@
 #include "config.h"
 #endif
 
+#include <helper/system.h>
+
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -27,6 +29,7 @@
 
 #include <helper/log.h>
 #include <helper/time_support.h>
+#include <helper/system.h>
 #include "aice_port.h"
 #include "aice_pipe.h"
 

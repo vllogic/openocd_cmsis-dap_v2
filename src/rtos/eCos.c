@@ -31,7 +31,7 @@ static bool eCos_detect_rtos(struct target *target);
 static int eCos_create(struct target *target);
 static int eCos_update_threads(struct rtos *rtos);
 static int eCos_get_thread_reg_list(struct rtos *rtos, int64_t thread_id, struct rtos_reg **reg_list, int *num_regs);
-static int eCos_get_symbol_list_to_lookup(symbol_table_elem_t *symbol_list[]);
+static int eCos_get_symbol_list_to_lookup(struct symbol_table_elem *symbol_list[]);
 
 struct eCos_thread_state {
 	int value;
@@ -47,7 +47,7 @@ static const struct eCos_thread_state eCos_thread_states[] = {
 	{ 16, "Exited" }
 };
 
-#define ECOS_NUM_STATES (sizeof(eCos_thread_states)/sizeof(struct eCos_thread_state))
+#define ECOS_NUM_STATES ARRAY_SIZE(eCos_thread_states)
 
 struct eCos_params {
 	const char *target_name;
@@ -72,8 +72,6 @@ static const struct eCos_params eCos_params_list[] = {
 	&rtos_eCos_Cortex_M3_stacking	/* stacking_info */
 	}
 };
-
-#define ECOS_NUM_PARAMS ((int)(sizeof(eCos_params_list)/sizeof(struct eCos_params)))
 
 enum eCos_symbol_values {
 	eCos_VAL_thread_list = 0,
@@ -351,11 +349,11 @@ static int eCos_get_thread_reg_list(struct rtos *rtos, int64_t thread_id,
 	return -1;
 }
 
-static int eCos_get_symbol_list_to_lookup(symbol_table_elem_t *symbol_list[])
+static int eCos_get_symbol_list_to_lookup(struct symbol_table_elem *symbol_list[])
 {
 	unsigned int i;
 	*symbol_list = calloc(
-			ARRAY_SIZE(eCos_symbol_list), sizeof(symbol_table_elem_t));
+			ARRAY_SIZE(eCos_symbol_list), sizeof(struct symbol_table_elem));
 
 	for (i = 0; i < ARRAY_SIZE(eCos_symbol_list); i++)
 		(*symbol_list)[i].symbol_name = eCos_symbol_list[i];
@@ -375,18 +373,14 @@ static bool eCos_detect_rtos(struct target *target)
 
 static int eCos_create(struct target *target)
 {
-	int i = 0;
-	while ((i < ECOS_NUM_PARAMS) &&
-		(0 != strcmp(eCos_params_list[i].target_name, target->type->name))) {
-		i++;
-	}
-	if (i >= ECOS_NUM_PARAMS) {
-		LOG_ERROR("Could not find target in eCos compatibility list");
-		return -1;
-	}
+	for (unsigned int i = 0; i < ARRAY_SIZE(eCos_params_list); i++)
+		if (strcmp(eCos_params_list[i].target_name, target->type->name) == 0) {
+			target->rtos->rtos_specific_params = (void *)&eCos_params_list[i];
+			target->rtos->current_thread = 0;
+			target->rtos->thread_details = NULL;
+			return 0;
+		}
 
-	target->rtos->rtos_specific_params = (void *) &eCos_params_list[i];
-	target->rtos->current_thread = 0;
-	target->rtos->thread_details = NULL;
-	return 0;
+	LOG_ERROR("Could not find target in eCos compatibility list");
+	return -1;
 }

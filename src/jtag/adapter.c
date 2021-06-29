@@ -37,10 +37,6 @@
 #include <transport/transport.h>
 #include <jtag/drivers/jtag_usb_common.h>
 
-#ifdef HAVE_STRINGS_H
-#include <strings.h>
-#endif
-
 /**
  * @file
  * Holds support for configuring debug adapters from TCl scripts.
@@ -51,8 +47,8 @@ const char * const jtag_only[] = { "jtag", NULL };
 
 static int jim_adapter_name(Jim_Interp *interp, int argc, Jim_Obj * const *argv)
 {
-	Jim_GetOptInfo goi;
-	Jim_GetOpt_Setup(&goi, interp, argc-1, argv + 1);
+	struct jim_getopt_info goi;
+	jim_getopt_setup(&goi, interp, argc-1, argv + 1);
 
 	/* return the name of the interface */
 	/* TCL code might need to know the exact type... */
@@ -62,7 +58,7 @@ static int jim_adapter_name(Jim_Interp *interp, int argc, Jim_Obj * const *argv)
 		return JIM_ERR;
 	}
 	const char *name = adapter_driver ? adapter_driver->name : NULL;
-	Jim_SetResultString(goi.interp, name ? : "undefined", -1);
+	Jim_SetResultString(goi.interp, name ? name : "undefined", -1);
 	return JIM_OK;
 }
 
@@ -497,7 +493,6 @@ COMMAND_HANDLER(handle_adapter_reset_de_assert)
 						  (srst == VALUE_DEASSERT) ? SRST_DEASSERT : SRST_ASSERT);
 }
 
-#ifndef HAVE_JTAG_MINIDRIVER_H
 #ifdef HAVE_LIBUSB_GET_PORT_NUMBERS
 COMMAND_HANDLER(handle_usb_location_command)
 {
@@ -522,7 +517,6 @@ static const struct command_registration adapter_usb_command_handlers[] = {
 #endif /* HAVE_LIBUSB_GET_PORT_NUMBERS */
 	COMMAND_REGISTRATION_DONE
 };
-#endif /* MINIDRIVER */
 
 static const struct command_registration adapter_srst_command_handlers[] = {
 	{
@@ -586,9 +580,8 @@ static const struct command_registration adapter_command_handlers[] = {
 		.handler = adapter_transports_command,
 		.mode = COMMAND_CONFIG,
 		.help = "Declare transports the adapter supports.",
-		.usage = "transport ... ",
+		.usage = "transport ...",
 	},
-#ifndef HAVE_JTAG_MINIDRIVER_H
 	{
 		.name = "usb",
 		.mode = COMMAND_ANY,
@@ -596,7 +589,6 @@ static const struct command_registration adapter_command_handlers[] = {
 		.usage = "",
 		.chain = adapter_usb_command_handlers,
 	},
-#endif /* MINIDRIVER */
 	{
 		.name = "assert",
 		.handler = handle_adapter_reset_de_assert,

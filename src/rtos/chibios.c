@@ -74,7 +74,7 @@ static const char * const chibios_thread_states[] = { "READY", "CURRENT",
 "WTEXIT", "WTOREVT", "WTANDEVT", "SNDMSGQ", "SNDMSG", "WTMSG", "FINAL"
 };
 
-#define CHIBIOS_NUM_STATES (sizeof(chibios_thread_states)/sizeof(char *))
+#define CHIBIOS_NUM_STATES ARRAY_SIZE(chibios_thread_states)
 
 /* Maximum ChibiOS thread name. There is no real limit set by ChibiOS but 64
  * chars ought to be enough.
@@ -100,14 +100,13 @@ static struct chibios_params chibios_params_list[] = {
 	NULL,									/* stacking_info */
 	}
 };
-#define CHIBIOS_NUM_PARAMS ((int)(sizeof(chibios_params_list)/sizeof(struct chibios_params)))
 
 static bool chibios_detect_rtos(struct target *target);
 static int chibios_create(struct target *target);
 static int chibios_update_threads(struct rtos *rtos);
 static int chibios_get_thread_reg_list(struct rtos *rtos, int64_t thread_id,
 		struct rtos_reg **reg_list, int *num_regs);
-static int chibios_get_symbol_list_to_lookup(symbol_table_elem_t *symbol_list[]);
+static int chibios_get_symbol_list_to_lookup(struct symbol_table_elem *symbol_list[]);
 
 struct rtos_type chibios_rtos = {
 	.name = "chibios",
@@ -131,7 +130,7 @@ enum chibios_symbol_values {
 	CHIBIOS_VAL_CH_DEBUG = 2
 };
 
-static symbol_table_elem_t chibios_symbol_list[] = {
+static struct symbol_table_elem chibios_symbol_list[] = {
 	{ "rlist", 0, true},		/* Thread ready list */
 	{ "ch", 0, true},			/* System data structure */
 	{ "ch_debug", 0, false},	/* Memory Signature containing offsets of fields in rlist */
@@ -497,7 +496,7 @@ static int chibios_get_thread_reg_list(struct rtos *rtos, int64_t thread_id,
 	return rtos_generic_stack_read(rtos->target, param->stacking_info, stack_ptr, reg_list, num_regs);
 }
 
-static int chibios_get_symbol_list_to_lookup(symbol_table_elem_t *symbol_list[])
+static int chibios_get_symbol_list_to_lookup(struct symbol_table_elem *symbol_list[])
 {
 	*symbol_list = malloc(sizeof(chibios_symbol_list));
 
@@ -529,17 +528,13 @@ static bool chibios_detect_rtos(struct target *target)
 
 static int chibios_create(struct target *target)
 {
-	int i = 0;
-	while ((i < CHIBIOS_NUM_PARAMS) &&
-			(0 != strcmp(chibios_params_list[i].target_name, target->type->name))) {
-		i++;
-	}
-	if (i >= CHIBIOS_NUM_PARAMS) {
-		LOG_WARNING("Could not find target \"%s\" in ChibiOS compatibility "
-				"list", target->type->name);
-		return -1;
-	}
+	for (unsigned int i = 0; i < ARRAY_SIZE(chibios_params_list); i++)
+		if (strcmp(chibios_params_list[i].target_name, target->type->name) == 0) {
+			target->rtos->rtos_specific_params = (void *)&chibios_params_list[i];
+			return 0;
+		}
 
-	target->rtos->rtos_specific_params = (void *) &chibios_params_list[i];
-	return 0;
+	LOG_WARNING("Could not find target \"%s\" in ChibiOS compatibility "
+				"list", target->type->name);
+	return -1;
 }

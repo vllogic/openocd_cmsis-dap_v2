@@ -547,7 +547,7 @@ static void ftdi_execute_scan(struct jtag_command *cmd)
 			uint8_t last_bit = 0;
 			if (field->out_value)
 				bit_copy(&last_bit, 0, field->out_value, field->num_bits - 1, 1);
-			uint8_t tms_bits = 0x01;
+			uint8_t tms_bits = 0x03;
 			DO_CLOCK_TMS_CS(mpsse_ctx,
 					&tms_bits,
 					0,
@@ -557,13 +557,24 @@ static void ftdi_execute_scan(struct jtag_command *cmd)
 					last_bit,
 					ftdi_jtag_mode);
 			tap_set_state(tap_state_transition(tap_get_state(), 1));
-			DO_CLOCK_TMS_CS_OUT(mpsse_ctx,
-					&tms_bits,
-					1,
-					1,
-					last_bit,
-					ftdi_jtag_mode);
-			tap_set_state(tap_state_transition(tap_get_state(), 0));
+			if (tap_get_end_state() == TAP_IDLE) {
+				DO_CLOCK_TMS_CS_OUT(mpsse_ctx,
+						&tms_bits,
+						1,
+						2,
+						last_bit,
+						ftdi_jtag_mode);
+				tap_set_state(tap_state_transition(tap_get_state(), 1));
+				tap_set_state(tap_state_transition(tap_get_state(), 0));
+			} else {
+				DO_CLOCK_TMS_CS_OUT(mpsse_ctx,
+						&tms_bits,
+						2,
+						1,
+						last_bit,
+						ftdi_jtag_mode);
+				tap_set_state(tap_state_transition(tap_get_state(), 0));
+			}
 		} else
 			DO_CLOCK_DATA(mpsse_ctx,
 				field->out_value,
@@ -1242,22 +1253,22 @@ COMMAND_HANDLER(ftdi_handle_vid_pid_command)
 
 COMMAND_HANDLER(ftdi_handle_tdo_sample_edge_command)
 {
-	Jim_Nvp *n;
-	static const Jim_Nvp nvp_ftdi_jtag_modes[] = {
+	struct jim_nvp *n;
+	static const struct jim_nvp nvp_ftdi_jtag_modes[] = {
 		{ .name = "rising", .value = JTAG_MODE },
 		{ .name = "falling", .value = JTAG_MODE_ALT },
 		{ .name = NULL, .value = -1 },
 	};
 
 	if (CMD_ARGC > 0) {
-		n = Jim_Nvp_name2value_simple(nvp_ftdi_jtag_modes, CMD_ARGV[0]);
+		n = jim_nvp_name2value_simple(nvp_ftdi_jtag_modes, CMD_ARGV[0]);
 		if (n->name == NULL)
 			return ERROR_COMMAND_SYNTAX_ERROR;
 		ftdi_jtag_mode = n->value;
 
 	}
 
-	n = Jim_Nvp_value2name_simple(nvp_ftdi_jtag_modes, ftdi_jtag_mode);
+	n = jim_nvp_value2name_simple(nvp_ftdi_jtag_modes, ftdi_jtag_mode);
 	command_print(CMD, "ftdi samples TDO on %s edge of TCK", n->name);
 
 	return ERROR_OK;
@@ -1334,7 +1345,7 @@ static const struct command_registration ftdi_command_handlers[] = {
 		.handler = &ftdi_handle_vid_pid_command,
 		.mode = COMMAND_CONFIG,
 		.help = "the vendor ID and product ID of the FTDI device",
-		.usage = "(vid pid)* ",
+		.usage = "(vid pid)*",
 	},
 	{
 		.name = "ftdi_tdo_sample_edge",

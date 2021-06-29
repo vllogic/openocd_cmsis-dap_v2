@@ -158,7 +158,7 @@ static LIST_HEAD(target_reset_callback_list);
 static LIST_HEAD(target_trace_callback_list);
 static const int polling_interval = TARGET_DEFAULT_POLLING_INTERVAL;
 
-static const Jim_Nvp nvp_assert[] = {
+static const struct jim_nvp nvp_assert[] = {
 	{ .name = "assert", NVP_ASSERT },
 	{ .name = "deassert", NVP_DEASSERT },
 	{ .name = "T", NVP_ASSERT },
@@ -168,7 +168,7 @@ static const Jim_Nvp nvp_assert[] = {
 	{ .name = NULL, .value = -1 }
 };
 
-static const Jim_Nvp nvp_error_target[] = {
+static const struct jim_nvp nvp_error_target[] = {
 	{ .value = ERROR_TARGET_INVALID, .name = "err-invalid" },
 	{ .value = ERROR_TARGET_INIT_FAILED, .name = "err-init-failed" },
 	{ .value = ERROR_TARGET_TIMEOUT, .name = "err-timeout" },
@@ -185,16 +185,16 @@ static const Jim_Nvp nvp_error_target[] = {
 
 static const char *target_strerror_safe(int err)
 {
-	const Jim_Nvp *n;
+	const struct jim_nvp *n;
 
-	n = Jim_Nvp_value2name_simple(nvp_error_target, err);
+	n = jim_nvp_value2name_simple(nvp_error_target, err);
 	if (n->name == NULL)
 		return "unknown";
 	else
 		return n->name;
 }
 
-static const Jim_Nvp nvp_target_event[] = {
+static const struct jim_nvp nvp_target_event[] = {
 
 	{ .value = TARGET_EVENT_GDB_HALT, .name = "gdb-halt" },
 	{ .value = TARGET_EVENT_HALTED, .name = "halted" },
@@ -237,7 +237,7 @@ static const Jim_Nvp nvp_target_event[] = {
 	{ .name = NULL, .value = -1 }
 };
 
-static const Jim_Nvp nvp_target_state[] = {
+static const struct jim_nvp nvp_target_state[] = {
 	{ .name = "unknown", .value = TARGET_UNKNOWN },
 	{ .name = "running", .value = TARGET_RUNNING },
 	{ .name = "halted",  .value = TARGET_HALTED },
@@ -246,7 +246,7 @@ static const Jim_Nvp nvp_target_state[] = {
 	{ .name = NULL, .value = -1 },
 };
 
-static const Jim_Nvp nvp_target_debug_reason[] = {
+static const struct jim_nvp nvp_target_debug_reason[] = {
 	{ .name = "debug-request",             .value = DBG_REASON_DBGRQ },
 	{ .name = "breakpoint",                .value = DBG_REASON_BREAKPOINT },
 	{ .name = "watchpoint",                .value = DBG_REASON_WATCHPOINT },
@@ -259,7 +259,7 @@ static const Jim_Nvp nvp_target_debug_reason[] = {
 	{ .name = NULL, .value = -1 },
 };
 
-static const Jim_Nvp nvp_target_endian[] = {
+static const struct jim_nvp nvp_target_endian[] = {
 	{ .name = "big",    .value = TARGET_BIG_ENDIAN },
 	{ .name = "little", .value = TARGET_LITTLE_ENDIAN },
 	{ .name = "be",     .value = TARGET_BIG_ENDIAN },
@@ -267,7 +267,7 @@ static const Jim_Nvp nvp_target_endian[] = {
 	{ .name = NULL,     .value = -1 },
 };
 
-static const Jim_Nvp nvp_reset_modes[] = {
+static const struct jim_nvp nvp_reset_modes[] = {
 	{ .name = "unknown", .value = RESET_UNKNOWN },
 	{ .name = "run",     .value = RESET_RUN },
 	{ .name = "halt",    .value = RESET_HALT },
@@ -279,7 +279,7 @@ const char *debug_reason_name(struct target *t)
 {
 	const char *cp;
 
-	cp = Jim_Nvp_value2name_simple(nvp_target_debug_reason,
+	cp = jim_nvp_value2name_simple(nvp_target_debug_reason,
 			t->debug_reason)->name;
 	if (!cp) {
 		LOG_ERROR("Invalid debug reason: %d", (int)(t->debug_reason));
@@ -291,7 +291,7 @@ const char *debug_reason_name(struct target *t)
 const char *target_state_name(struct target *t)
 {
 	const char *cp;
-	cp = Jim_Nvp_value2name_simple(nvp_target_state, t->state)->name;
+	cp = jim_nvp_value2name_simple(nvp_target_state, t->state)->name;
 	if (!cp) {
 		LOG_ERROR("Invalid target state: %d", (int)(t->state));
 		cp = "(*BUG*unknown*BUG*)";
@@ -306,7 +306,7 @@ const char *target_state_name(struct target *t)
 const char *target_event_name(enum target_event event)
 {
 	const char *cp;
-	cp = Jim_Nvp_value2name_simple(nvp_target_event, event)->name;
+	cp = jim_nvp_value2name_simple(nvp_target_event, event)->name;
 	if (!cp) {
 		LOG_ERROR("Invalid target event: %d", (int)(event));
 		cp = "(*BUG*unknown*BUG*)";
@@ -317,7 +317,7 @@ const char *target_event_name(enum target_event event)
 const char *target_reset_mode_name(enum target_reset_mode reset_mode)
 {
 	const char *cp;
-	cp = Jim_Nvp_value2name_simple(nvp_reset_modes, reset_mode)->name;
+	cp = jim_nvp_value2name_simple(nvp_reset_modes, reset_mode)->name;
 	if (!cp) {
 		LOG_ERROR("Invalid target reset mode: %d", (int)(reset_mode));
 		cp = "(*BUG*unknown*BUG*)";
@@ -637,7 +637,18 @@ int target_resume(struct target *target, int current, target_addr_t address,
 	 * we poll. The CPU can even halt at the current PC as a result of
 	 * a software breakpoint being inserted by (a bug?) the application.
 	 */
+	/*
+	 * resume() triggers the event 'resumed'. The execution of TCL commands
+	 * in the event handler causes the polling of targets. If the target has
+	 * already halted for a breakpoint, polling will run the 'halted' event
+	 * handler before the pending 'resumed' handler.
+	 * Disable polling during resume() to guarantee the execution of handlers
+	 * in the correct order.
+	 */
+	bool save_poll = jtag_poll_get_enabled();
+	jtag_poll_set_enabled(false);
 	retval = target->type->resume(target, current, address, handle_breakpoints, debug_execution);
+	jtag_poll_set_enabled(save_poll);
 	if (retval != ERROR_OK)
 		return retval;
 
@@ -650,8 +661,8 @@ static int target_process_reset(struct command_invocation *cmd, enum target_rese
 {
 	char buf[100];
 	int retval;
-	Jim_Nvp *n;
-	n = Jim_Nvp_value2name_simple(nvp_reset_modes, reset_mode);
+	struct jim_nvp *n;
+	n = jim_nvp_value2name_simple(nvp_reset_modes, reset_mode);
 	if (n->name == NULL) {
 		LOG_ERROR("invalid reset mode");
 		return ERROR_FAIL;
@@ -1495,7 +1506,7 @@ unsigned target_address_bits(struct target *target)
 	return 32;
 }
 
-unsigned target_data_bits(struct target *target)
+unsigned int target_data_bits(struct target *target)
 {
 	if (target->type->data_bits)
 		return target->type->data_bits(target);
@@ -1818,7 +1829,7 @@ int target_call_event_callbacks(struct target *target, enum target_event event)
 	}
 
 	LOG_DEBUG("target event %i (%s) for core %s", event,
-			Jim_Nvp_value2name_simple(nvp_target_event, event)->name,
+			jim_nvp_value2name_simple(nvp_target_event, event)->name,
 			target_name(target));
 
 	target_handle_event(target, event);
@@ -1837,7 +1848,7 @@ int target_call_reset_callbacks(struct target *target, enum target_reset_mode re
 	struct target_reset_callback *callback;
 
 	LOG_DEBUG("target reset %i (%s)", reset_mode,
-			Jim_Nvp_value2name_simple(nvp_reset_modes, reset_mode)->name);
+			jim_nvp_value2name_simple(nvp_reset_modes, reset_mode)->name);
 
 	list_for_each_entry(callback, &target_reset_callback_list, list)
 		callback->callback(target, reset_mode, callback->priv);
@@ -2404,11 +2415,12 @@ static int target_write_buffer_default(struct target *target,
 	target_addr_t address, uint32_t count, const uint8_t *buffer)
 {
 	uint32_t size;
+	unsigned int data_bytes = target_data_bits(target) / 8;
 
 	/* Align up to maximum bytes. The loop condition makes sure the next pass
 	 * will have something to do with the size we leave to it. */
 	for (size = 1;
-			size < target_data_bits(target) / 8 && count >= size * 2 + (address & size);
+			size < data_bytes && count >= size * 2 + (address & size);
 			size *= 2) {
 		if (address & size) {
 			int retval = target_write_memory(target, address, size, 1, buffer);
@@ -2467,11 +2479,12 @@ int target_read_buffer(struct target *target, target_addr_t address, uint32_t si
 static int target_read_buffer_default(struct target *target, target_addr_t address, uint32_t count, uint8_t *buffer)
 {
 	uint32_t size;
+	unsigned int data_bytes = target_data_bits(target) / 8;
 
 	/* Align up to maximum bytes. The loop condition makes sure the next pass
 	 * will have something to do with the size we leave to it. */
 	for (size = 1;
-			size < target_data_bits(target) / 8 && count >= size * 2 + (address & size);
+			size < data_bytes && count >= size * 2 + (address & size);
 			size *= 2) {
 		if (address & size) {
 			int retval = target_read_memory(target, address, size, 1, buffer);
@@ -2865,7 +2878,7 @@ COMMAND_HANDLER(handle_targets_command)
 				marker,
 				target_name(target),
 				target_type_name(target),
-				Jim_Nvp_value2name_simple(nvp_target_endian,
+				jim_nvp_value2name_simple(nvp_target_endian,
 					target->endianness)->name,
 				target->tap->dotted_name,
 				state);
@@ -3258,7 +3271,7 @@ int target_wait_state(struct target *target, enum target_state state, int ms)
 			once = false;
 			then = timeval_ms();
 			LOG_DEBUG("waiting for target %s...",
-				Jim_Nvp_value2name_simple(nvp_target_state, state)->name);
+				jim_nvp_value2name_simple(nvp_target_state, state)->name);
 		}
 
 		if (cur-then > 500)
@@ -3266,7 +3279,7 @@ int target_wait_state(struct target *target, enum target_state state, int ms)
 
 		if ((cur-then) > ms) {
 			LOG_ERROR("timed out while waiting for target %s",
-				Jim_Nvp_value2name_simple(nvp_target_state, state)->name);
+				jim_nvp_value2name_simple(nvp_target_state, state)->name);
 			return ERROR_FAIL;
 		}
 	}
@@ -3316,8 +3329,8 @@ COMMAND_HANDLER(handle_reset_command)
 
 	enum target_reset_mode reset_mode = RESET_RUN;
 	if (CMD_ARGC == 1) {
-		const Jim_Nvp *n;
-		n = Jim_Nvp_name2value_simple(nvp_reset_modes, CMD_ARGV[0]);
+		const struct jim_nvp *n;
+		n = jim_nvp_name2value_simple(nvp_reset_modes, CMD_ARGV[0]);
 		if ((n->name == NULL) || (n->value == RESET_UNKNOWN))
 			return ERROR_COMMAND_SYNTAX_ERROR;
 		reset_mode = n->value;
@@ -4087,7 +4100,7 @@ COMMAND_HANDLER(handle_wp_command)
 	}
 
 	enum watchpoint_rw type = WPT_ACCESS;
-	uint32_t addr = 0;
+	target_addr_t addr = 0;
 	uint32_t length = 0;
 	uint32_t data_value = 0x0;
 	uint32_t data_mask = 0xffffffff;
@@ -4117,7 +4130,7 @@ COMMAND_HANDLER(handle_wp_command)
 		/* fall through */
 	case 2:
 		COMMAND_PARSE_NUMBER(u32, CMD_ARGV[1], length);
-		COMMAND_PARSE_NUMBER(u32, CMD_ARGV[0], addr);
+		COMMAND_PARSE_ADDRESS(CMD_ARGV[0], addr);
 		break;
 
 	default:
@@ -4137,8 +4150,8 @@ COMMAND_HANDLER(handle_rwp_command)
 	if (CMD_ARGC != 1)
 		return ERROR_COMMAND_SYNTAX_ERROR;
 
-	uint32_t addr;
-	COMMAND_PARSE_NUMBER(u32, CMD_ARGV[0], addr);
+	target_addr_t addr;
+	COMMAND_PARSE_ADDRESS(CMD_ARGV[0], addr);
 
 	struct target *target = get_current_target(CMD_CTX);
 	watchpoint_remove(target, addr);
@@ -4796,7 +4809,7 @@ void target_handle_event(struct target *target, enum target_event e)
 					   target_name(target),
 					   target_type_name(target),
 					   e,
-					   Jim_Nvp_value2name_simple(nvp_target_event, e)->name,
+					   jim_nvp_value2name_simple(nvp_target_event, e)->name,
 					   Jim_GetString(teap->body, NULL));
 
 			/* Override current target by the target an event
@@ -4820,7 +4833,7 @@ void target_handle_event(struct target *target, enum target_event e)
 			if (retval != JIM_OK) {
 				Jim_MakeErrorMessage(teap->interp);
 				LOG_USER("Error executing event %s on target %s:\n%s",
-						  Jim_Nvp_value2name_simple(nvp_target_event, e)->name,
+						  jim_nvp_value2name_simple(nvp_target_event, e)->name,
 						  target_name(target),
 						  Jim_GetString(Jim_GetResult(teap->interp), NULL));
 				/* clean both error code and stacktrace before return */
@@ -4861,7 +4874,7 @@ enum target_cfg_param {
 	TCFG_GDB_MAX_CONNECTIONS,
 };
 
-static Jim_Nvp nvp_config_opts[] = {
+static struct jim_nvp nvp_config_opts[] = {
 	{ .name = "-type",             .value = TCFG_TYPE },
 	{ .name = "-event",            .value = TCFG_EVENT },
 	{ .name = "-work-area-virt",   .value = TCFG_WORK_AREA_VIRT },
@@ -4879,9 +4892,9 @@ static Jim_Nvp nvp_config_opts[] = {
 	{ .name = NULL, .value = -1 }
 };
 
-static int target_configure(Jim_GetOptInfo *goi, struct target *target)
+static int target_configure(struct jim_getopt_info *goi, struct target *target)
 {
-	Jim_Nvp *n;
+	struct jim_nvp *n;
 	Jim_Obj *o;
 	jim_wide w;
 	int e;
@@ -4889,7 +4902,7 @@ static int target_configure(Jim_GetOptInfo *goi, struct target *target)
 	/* parse config or cget options ... */
 	while (goi->argc > 0) {
 		Jim_SetEmptyResult(goi->interp);
-		/* Jim_GetOpt_Debug(goi); */
+		/* jim_getopt_debug(goi); */
 
 		if (target->type->target_jim_configure) {
 			/* target defines a configure function */
@@ -4905,9 +4918,9 @@ static int target_configure(Jim_GetOptInfo *goi, struct target *target)
 			}
 			/* otherwise we 'continue' below */
 		}
-		e = Jim_GetOpt_Nvp(goi, nvp_config_opts, &n);
+		e = jim_getopt_nvp(goi, nvp_config_opts, &n);
 		if (e != JIM_OK) {
-			Jim_GetOpt_NvpUnknown(goi, nvp_config_opts, 0);
+			jim_getopt_nvp_unknown(goi, nvp_config_opts, 0);
 			return e;
 		}
 		switch (n->value) {
@@ -4936,9 +4949,9 @@ no_params:
 				return JIM_ERR;
 			}
 
-			e = Jim_GetOpt_Nvp(goi, nvp_target_event, &n);
+			e = jim_getopt_nvp(goi, nvp_target_event, &n);
 			if (e != JIM_OK) {
-				Jim_GetOpt_NvpUnknown(goi, nvp_target_event, 1);
+				jim_getopt_nvp_unknown(goi, nvp_target_event, 1);
 				return e;
 			}
 
@@ -4966,6 +4979,11 @@ no_params:
 				}
 
 				if (goi->isconfigure) {
+					/* START_DEPRECATED_TPIU */
+					if (n->value == TARGET_EVENT_TRACE_CONFIG)
+						LOG_INFO("DEPRECATED target event %s", n->name);
+					/* END_DEPRECATED_TPIU */
+
 					bool replace = true;
 					if (teap == NULL) {
 						/* create new */
@@ -4974,7 +4992,7 @@ no_params:
 					}
 					teap->event = n->value;
 					teap->interp = goi->interp;
-					Jim_GetOpt_Obj(goi, &o);
+					jim_getopt_obj(goi, &o);
 					if (teap->body)
 						Jim_DecrRefCount(teap->interp, teap->body);
 					teap->body  = Jim_DuplicateObj(goi->interp, o);
@@ -5010,7 +5028,7 @@ no_params:
 		case TCFG_WORK_AREA_VIRT:
 			if (goi->isconfigure) {
 				target_free_all_working_areas(target);
-				e = Jim_GetOpt_Wide(goi, &w);
+				e = jim_getopt_wide(goi, &w);
 				if (e != JIM_OK)
 					return e;
 				target->working_area_virt = w;
@@ -5026,7 +5044,7 @@ no_params:
 		case TCFG_WORK_AREA_PHYS:
 			if (goi->isconfigure) {
 				target_free_all_working_areas(target);
-				e = Jim_GetOpt_Wide(goi, &w);
+				e = jim_getopt_wide(goi, &w);
 				if (e != JIM_OK)
 					return e;
 				target->working_area_phys = w;
@@ -5042,7 +5060,7 @@ no_params:
 		case TCFG_WORK_AREA_SIZE:
 			if (goi->isconfigure) {
 				target_free_all_working_areas(target);
-				e = Jim_GetOpt_Wide(goi, &w);
+				e = jim_getopt_wide(goi, &w);
 				if (e != JIM_OK)
 					return e;
 				target->working_area_size = w;
@@ -5057,7 +5075,7 @@ no_params:
 		case TCFG_WORK_AREA_BACKUP:
 			if (goi->isconfigure) {
 				target_free_all_working_areas(target);
-				e = Jim_GetOpt_Wide(goi, &w);
+				e = jim_getopt_wide(goi, &w);
 				if (e != JIM_OK)
 					return e;
 				/* make this exactly 1 or 0 */
@@ -5073,9 +5091,9 @@ no_params:
 
 		case TCFG_ENDIAN:
 			if (goi->isconfigure) {
-				e = Jim_GetOpt_Nvp(goi, nvp_target_endian, &n);
+				e = jim_getopt_nvp(goi, nvp_target_endian, &n);
 				if (e != JIM_OK) {
-					Jim_GetOpt_NvpUnknown(goi, nvp_target_endian, 1);
+					jim_getopt_nvp_unknown(goi, nvp_target_endian, 1);
 					return e;
 				}
 				target->endianness = n->value;
@@ -5083,10 +5101,10 @@ no_params:
 				if (goi->argc != 0)
 					goto no_params;
 			}
-			n = Jim_Nvp_value2name_simple(nvp_target_endian, target->endianness);
+			n = jim_nvp_value2name_simple(nvp_target_endian, target->endianness);
 			if (n->name == NULL) {
 				target->endianness = TARGET_LITTLE_ENDIAN;
-				n = Jim_Nvp_value2name_simple(nvp_target_endian, target->endianness);
+				n = jim_nvp_value2name_simple(nvp_target_endian, target->endianness);
 			}
 			Jim_SetResultString(goi->interp, n->name, -1);
 			/* loop for more */
@@ -5094,7 +5112,7 @@ no_params:
 
 		case TCFG_COREID:
 			if (goi->isconfigure) {
-				e = Jim_GetOpt_Wide(goi, &w);
+				e = jim_getopt_wide(goi, &w);
 				if (e != JIM_OK)
 					return e;
 				target->coreid = (int32_t)w;
@@ -5118,7 +5136,7 @@ no_params:
 				}
 
 				target_free_all_working_areas(target);
-				e = Jim_GetOpt_Obj(goi, &o_t);
+				e = jim_getopt_obj(goi, &o_t);
 				if (e != JIM_OK)
 					return e;
 				tap = jtag_tap_by_jim_obj(goi->interp, o_t);
@@ -5135,7 +5153,7 @@ no_params:
 			break;
 		case TCFG_DBGBASE:
 			if (goi->isconfigure) {
-				e = Jim_GetOpt_Wide(goi, &w);
+				e = jim_getopt_wide(goi, &w);
 				if (e != JIM_OK)
 					return e;
 				target->dbgbase = (uint32_t)w;
@@ -5172,7 +5190,7 @@ no_params:
 				}
 
 				const char *s;
-				e = Jim_GetOpt_String(goi, &s, NULL);
+				e = jim_getopt_string(goi, &s, NULL);
 				if (e != JIM_OK)
 					return e;
 				free(target->gdb_port_override);
@@ -5181,7 +5199,7 @@ no_params:
 				if (goi->argc != 0)
 					goto no_params;
 			}
-			Jim_SetResultString(goi->interp, target->gdb_port_override ? : "undefined", -1);
+			Jim_SetResultString(goi->interp, target->gdb_port_override ? target->gdb_port_override : "undefined", -1);
 			/* loop for more */
 			break;
 
@@ -5189,11 +5207,11 @@ no_params:
 			if (goi->isconfigure) {
 				struct command_context *cmd_ctx = current_command_context(goi->interp);
 				if (cmd_ctx->mode != COMMAND_CONFIG) {
-					Jim_SetResultString(goi->interp, "-gdb-max-conenctions must be configured before 'init'", -1);
+					Jim_SetResultString(goi->interp, "-gdb-max-connections must be configured before 'init'", -1);
 					return JIM_ERR;
 				}
 
-				e = Jim_GetOpt_Wide(goi, &w);
+				e = jim_getopt_wide(goi, &w);
 				if (e != JIM_OK)
 					return e;
 				target->gdb_max_connections = (w < 0) ? CONNECTION_LIMIT_UNLIMITED : (int)w;
@@ -5213,30 +5231,37 @@ no_params:
 
 static int jim_target_configure(Jim_Interp *interp, int argc, Jim_Obj * const *argv)
 {
-	Jim_GetOptInfo goi;
+	struct command *c = jim_to_command(interp);
+	struct jim_getopt_info goi;
 
-	Jim_GetOpt_Setup(&goi, interp, argc - 1, argv + 1);
-	goi.isconfigure = !strcmp(Jim_GetString(argv[0], NULL), "configure");
+	jim_getopt_setup(&goi, interp, argc - 1, argv + 1);
+	goi.isconfigure = !strcmp(c->name, "configure");
 	if (goi.argc < 1) {
 		Jim_WrongNumArgs(goi.interp, goi.argc, goi.argv,
 				 "missing: -option ...");
 		return JIM_ERR;
 	}
-	struct target *target = Jim_CmdPrivData(goi.interp);
+	struct command_context *cmd_ctx = current_command_context(interp);
+	assert(cmd_ctx);
+	struct target *target = get_current_target(cmd_ctx);
 	return target_configure(&goi, target);
 }
 
 static int jim_target_mem2array(Jim_Interp *interp,
 		int argc, Jim_Obj *const *argv)
 {
-	struct target *target = Jim_CmdPrivData(interp);
+	struct command_context *cmd_ctx = current_command_context(interp);
+	assert(cmd_ctx);
+	struct target *target = get_current_target(cmd_ctx);
 	return target_mem2array(interp, target, argc - 1, argv + 1);
 }
 
 static int jim_target_array2mem(Jim_Interp *interp,
 		int argc, Jim_Obj *const *argv)
 {
-	struct target *target = Jim_CmdPrivData(interp);
+	struct command_context *cmd_ctx = current_command_context(interp);
+	assert(cmd_ctx);
+	struct target *target = get_current_target(cmd_ctx);
 	return target_array2mem(interp, target, argc - 1, argv + 1);
 }
 
@@ -5250,8 +5275,8 @@ static int jim_target_examine(Jim_Interp *interp, int argc, Jim_Obj *const *argv
 {
 	bool allow_defer = false;
 
-	Jim_GetOptInfo goi;
-	Jim_GetOpt_Setup(&goi, interp, argc - 1, argv + 1);
+	struct jim_getopt_info goi;
+	jim_getopt_setup(&goi, interp, argc - 1, argv + 1);
 	if (goi.argc > 1) {
 		const char *cmd_name = Jim_GetString(argv[0], NULL);
 		Jim_SetResultFormatted(goi.interp,
@@ -5262,13 +5287,15 @@ static int jim_target_examine(Jim_Interp *interp, int argc, Jim_Obj *const *argv
 	    strcmp(Jim_GetString(argv[1], NULL), "allow-defer") == 0) {
 		/* consume it */
 		Jim_Obj *obj;
-		int e = Jim_GetOpt_Obj(&goi, &obj);
+		int e = jim_getopt_obj(&goi, &obj);
 		if (e != JIM_OK)
 			return e;
 		allow_defer = true;
 	}
 
-	struct target *target = Jim_CmdPrivData(interp);
+	struct command_context *cmd_ctx = current_command_context(interp);
+	assert(cmd_ctx);
+	struct target *target = get_current_target(cmd_ctx);
 	if (!target->tap->enabled)
 		return jim_target_tap_disabled(interp);
 
@@ -5286,7 +5313,9 @@ static int jim_target_examine(Jim_Interp *interp, int argc, Jim_Obj *const *argv
 
 static int jim_target_was_examined(Jim_Interp *interp, int argc, Jim_Obj * const *argv)
 {
-	struct target *target = Jim_CmdPrivData(interp);
+	struct command_context *cmd_ctx = current_command_context(interp);
+	assert(cmd_ctx);
+	struct target *target = get_current_target(cmd_ctx);
 
 	Jim_SetResultBool(interp, target_was_examined(target));
 	return JIM_OK;
@@ -5294,7 +5323,9 @@ static int jim_target_was_examined(Jim_Interp *interp, int argc, Jim_Obj * const
 
 static int jim_target_examine_deferred(Jim_Interp *interp, int argc, Jim_Obj * const *argv)
 {
-	struct target *target = Jim_CmdPrivData(interp);
+	struct command_context *cmd_ctx = current_command_context(interp);
+	assert(cmd_ctx);
+	struct target *target = get_current_target(cmd_ctx);
 
 	Jim_SetResultBool(interp, target->defer_examine);
 	return JIM_OK;
@@ -5306,7 +5337,9 @@ static int jim_target_halt_gdb(Jim_Interp *interp, int argc, Jim_Obj *const *arg
 		Jim_WrongNumArgs(interp, 1, argv, "[no parameters]");
 		return JIM_ERR;
 	}
-	struct target *target = Jim_CmdPrivData(interp);
+	struct command_context *cmd_ctx = current_command_context(interp);
+	assert(cmd_ctx);
+	struct target *target = get_current_target(cmd_ctx);
 
 	if (target_call_event_callbacks(target, TARGET_EVENT_GDB_HALT) != ERROR_OK)
 		return JIM_ERR;
@@ -5320,7 +5353,9 @@ static int jim_target_poll(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
 		Jim_WrongNumArgs(interp, 1, argv, "[no parameters]");
 		return JIM_ERR;
 	}
-	struct target *target = Jim_CmdPrivData(interp);
+	struct command_context *cmd_ctx = current_command_context(interp);
+	assert(cmd_ctx);
+	struct target *target = get_current_target(cmd_ctx);
 	if (!target->tap->enabled)
 		return jim_target_tap_disabled(interp);
 
@@ -5336,8 +5371,8 @@ static int jim_target_poll(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
 
 static int jim_target_reset(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
 {
-	Jim_GetOptInfo goi;
-	Jim_GetOpt_Setup(&goi, interp, argc - 1, argv + 1);
+	struct jim_getopt_info goi;
+	jim_getopt_setup(&goi, interp, argc - 1, argv + 1);
 
 	if (goi.argc != 2) {
 		Jim_WrongNumArgs(interp, 0, argv,
@@ -5345,19 +5380,21 @@ static int jim_target_reset(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
 		return JIM_ERR;
 	}
 
-	Jim_Nvp *n;
-	int e = Jim_GetOpt_Nvp(&goi, nvp_assert, &n);
+	struct jim_nvp *n;
+	int e = jim_getopt_nvp(&goi, nvp_assert, &n);
 	if (e != JIM_OK) {
-		Jim_GetOpt_NvpUnknown(&goi, nvp_assert, 1);
+		jim_getopt_nvp_unknown(&goi, nvp_assert, 1);
 		return e;
 	}
 	/* the halt or not param */
 	jim_wide a;
-	e = Jim_GetOpt_Wide(&goi, &a);
+	e = jim_getopt_wide(&goi, &a);
 	if (e != JIM_OK)
 		return e;
 
-	struct target *target = Jim_CmdPrivData(goi.interp);
+	struct command_context *cmd_ctx = current_command_context(interp);
+	assert(cmd_ctx);
+	struct target *target = get_current_target(cmd_ctx);
 	if (!target->tap->enabled)
 		return jim_target_tap_disabled(interp);
 
@@ -5372,7 +5409,7 @@ static int jim_target_reset(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
 		target_reset_examined(target);
 
 	/* determine if we should halt or not. */
-	target->reset_halt = !!a;
+	target->reset_halt = (a != 0);
 	/* When this happens - all workareas are invalid. */
 	target_free_all_working_areas_restore(target, 0);
 
@@ -5390,7 +5427,9 @@ static int jim_target_halt(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
 		Jim_WrongNumArgs(interp, 1, argv, "[no parameters]");
 		return JIM_ERR;
 	}
-	struct target *target = Jim_CmdPrivData(interp);
+	struct command_context *cmd_ctx = current_command_context(interp);
+	assert(cmd_ctx);
+	struct target *target = get_current_target(cmd_ctx);
 	if (!target->tap->enabled)
 		return jim_target_tap_disabled(interp);
 	int e = target->type->halt(target);
@@ -5399,8 +5438,8 @@ static int jim_target_halt(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
 
 static int jim_target_wait_state(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
 {
-	Jim_GetOptInfo goi;
-	Jim_GetOpt_Setup(&goi, interp, argc - 1, argv + 1);
+	struct jim_getopt_info goi;
+	jim_getopt_setup(&goi, interp, argc - 1, argv + 1);
 
 	/* params:  <name>  statename timeoutmsecs */
 	if (goi.argc != 2) {
@@ -5410,17 +5449,19 @@ static int jim_target_wait_state(Jim_Interp *interp, int argc, Jim_Obj *const *a
 		return JIM_ERR;
 	}
 
-	Jim_Nvp *n;
-	int e = Jim_GetOpt_Nvp(&goi, nvp_target_state, &n);
+	struct jim_nvp *n;
+	int e = jim_getopt_nvp(&goi, nvp_target_state, &n);
 	if (e != JIM_OK) {
-		Jim_GetOpt_NvpUnknown(&goi, nvp_target_state, 1);
+		jim_getopt_nvp_unknown(&goi, nvp_target_state, 1);
 		return e;
 	}
 	jim_wide a;
-	e = Jim_GetOpt_Wide(&goi, &a);
+	e = jim_getopt_wide(&goi, &a);
 	if (e != JIM_OK)
 		return e;
-	struct target *target = Jim_CmdPrivData(interp);
+	struct command_context *cmd_ctx = current_command_context(interp);
+	assert(cmd_ctx);
+	struct target *target = get_current_target(cmd_ctx);
 	if (!target->tap->enabled)
 		return jim_target_tap_disabled(interp);
 
@@ -5450,7 +5491,7 @@ COMMAND_HANDLER(handle_target_event_list)
 	command_print(CMD, "------------------------- | "
 			"----------------------------------------");
 	while (teap) {
-		Jim_Nvp *opt = Jim_Nvp_value2name_simple(nvp_target_event, teap->event);
+		struct jim_nvp *opt = jim_nvp_value2name_simple(nvp_target_event, teap->event);
 		command_print(CMD, "%-25s | %s",
 				opt->name, Jim_GetString(teap->body, NULL));
 		teap = teap->next;
@@ -5464,26 +5505,30 @@ static int jim_target_current_state(Jim_Interp *interp, int argc, Jim_Obj *const
 		Jim_WrongNumArgs(interp, 1, argv, "[no parameters]");
 		return JIM_ERR;
 	}
-	struct target *target = Jim_CmdPrivData(interp);
+	struct command_context *cmd_ctx = current_command_context(interp);
+	assert(cmd_ctx);
+	struct target *target = get_current_target(cmd_ctx);
 	Jim_SetResultString(interp, target_state_name(target), -1);
 	return JIM_OK;
 }
 static int jim_target_invoke_event(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
 {
-	Jim_GetOptInfo goi;
-	Jim_GetOpt_Setup(&goi, interp, argc - 1, argv + 1);
+	struct jim_getopt_info goi;
+	jim_getopt_setup(&goi, interp, argc - 1, argv + 1);
 	if (goi.argc != 1) {
 		const char *cmd_name = Jim_GetString(argv[0], NULL);
 		Jim_SetResultFormatted(goi.interp, "%s <eventname>", cmd_name);
 		return JIM_ERR;
 	}
-	Jim_Nvp *n;
-	int e = Jim_GetOpt_Nvp(&goi, nvp_target_event, &n);
+	struct jim_nvp *n;
+	int e = jim_getopt_nvp(&goi, nvp_target_event, &n);
 	if (e != JIM_OK) {
-		Jim_GetOpt_NvpUnknown(&goi, nvp_target_event, 1);
+		jim_getopt_nvp_unknown(&goi, nvp_target_event, 1);
 		return e;
 	}
-	struct target *target = Jim_CmdPrivData(interp);
+	struct command_context *cmd_ctx = current_command_context(interp);
+	assert(cmd_ctx);
+	struct target *target = get_current_target(cmd_ctx);
 	target_handle_event(target, n->value);
 	return JIM_OK;
 }
@@ -5647,7 +5692,7 @@ static const struct command_registration target_instance_command_handlers[] = {
 	COMMAND_REGISTRATION_DONE
 };
 
-static int target_create(Jim_GetOptInfo *goi)
+static int target_create(struct jim_getopt_info *goi)
 {
 	Jim_Obj *new_cmd;
 	Jim_Cmd *cmd;
@@ -5666,7 +5711,7 @@ static int target_create(Jim_GetOptInfo *goi)
 	}
 
 	/* COMMAND */
-	Jim_GetOpt_Obj(goi, &new_cmd);
+	jim_getopt_obj(goi, &new_cmd);
 	/* does this command exist? */
 	cmd = Jim_GetCommand(goi->interp, new_cmd, JIM_ERRMSG);
 	if (cmd) {
@@ -5676,7 +5721,7 @@ static int target_create(Jim_GetOptInfo *goi)
 	}
 
 	/* TYPE */
-	e = Jim_GetOpt_String(goi, &cp, NULL);
+	e = jim_getopt_string(goi, &cp, NULL);
 	if (e != JIM_OK)
 		return e;
 	struct transport *tr = get_current_transport();
@@ -5693,15 +5738,6 @@ static int target_create(Jim_GetOptInfo *goi)
 		if (0 == strcmp(cp, target_types[x]->name)) {
 			/* found */
 			break;
-		}
-
-		/* check for deprecated name */
-		if (target_types[x]->deprecated_name) {
-			if (0 == strcmp(cp, target_types[x]->deprecated_name)) {
-				/* found */
-				LOG_WARNING("target name is deprecated use: \'%s\'", target_types[x]->name);
-				break;
-			}
 		}
 	}
 	if (target_types[x] == NULL) {
@@ -5741,9 +5777,6 @@ static int target_create(Jim_GetOptInfo *goi)
 	}
 
 	memcpy(target->type, target_types[x], sizeof(struct target_type));
-
-	/* will be set by "-endian" */
-	target->endianness = TARGET_ENDIAN_UNKNOWN;
 
 	/* default to first core, override with -coreid */
 	target->coreid = 0;
@@ -5873,7 +5906,7 @@ static int target_create(Jim_GetOptInfo *goi)
 		},
 		COMMAND_REGISTRATION_DONE
 	};
-	e = register_commands(cmd_ctx, NULL, target_commands);
+	e = register_commands_override_target(cmd_ctx, NULL, target_commands, target);
 	if (e != ERROR_OK) {
 		if (target->type->deinit_target)
 			target->type->deinit_target(target);
@@ -5885,10 +5918,6 @@ static int target_create(Jim_GetOptInfo *goi)
 		free(target);
 		return JIM_ERR;
 	}
-
-	struct command *c = command_find_in_context(cmd_ctx, cp);
-	assert(c);
-	command_set_handler_data(c, target);
 
 	/* append to end of list */
 	append_to_list_all_targets(target);
@@ -5998,8 +6027,8 @@ static int jim_target_smp(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
 
 static int jim_target_create(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
 {
-	Jim_GetOptInfo goi;
-	Jim_GetOpt_Setup(&goi, interp, argc - 1, argv + 1);
+	struct jim_getopt_info goi;
+	jim_getopt_setup(&goi, interp, argc - 1, argv + 1);
 	if (goi.argc < 3) {
 		Jim_WrongNumArgs(goi.interp, goi.argc, goi.argv,
 			"<name> <target_type> [<target_options> ...]");
@@ -6204,17 +6233,6 @@ COMMAND_HANDLER(handle_fast_load_command)
 	return retval;
 }
 
-bool enable_rtos_riscv;
-COMMAND_HANDLER(handle_enable_rtos_riscv_command)
-{
-	if (CMD_ARGC != 0) {
-		LOG_ERROR("Command takes no arguments");
-		return ERROR_COMMAND_SYNTAX_ERROR;
-	}
-	enable_rtos_riscv = true;
-	return ERROR_OK;
-}
-
 static const struct command_registration target_command_handlers[] = {
 	{
 		.name = "targets",
@@ -6230,14 +6248,6 @@ static const struct command_registration target_command_handlers[] = {
 		.help = "configure target",
 		.chain = target_subcommand_handlers,
 		.usage = "",
-	},
-	{
-		.name = "enable_rtos_riscv",
-		.handler = handle_enable_rtos_riscv_command,
-		.mode = COMMAND_CONFIG,
-		.usage = "enable_rtos_riscv",
-		.help = "Allow the use of `-rtos riscv` for just a little longer, "
-			"until it will be completely removed at the end of 2020."
 	},
 	COMMAND_REGISTRATION_DONE
 };
@@ -6703,15 +6713,15 @@ static const struct command_registration target_exec_command_handlers[] = {
 		.handler = handle_target_reset_nag,
 		.mode = COMMAND_ANY,
 		.help = "Nag after each reset about options that could have been "
-				"enabled to improve performance. ",
+				"enabled to improve performance.",
 		.usage = "['enable'|'disable']",
 	},
 	{
 		.name = "ps",
 		.handler = handle_ps_command,
 		.mode = COMMAND_EXEC,
-		.help = "list all tasks ",
-		.usage = " ",
+		.help = "list all tasks",
+		.usage = "",
 	},
 	{
 		.name = "test_mem_access",

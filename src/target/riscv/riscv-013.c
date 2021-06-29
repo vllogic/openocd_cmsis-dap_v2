@@ -85,8 +85,6 @@ void read_memory_sba_simple(struct target *target, target_addr_t addr,
 #define get_field(reg, mask) (((reg) & (mask)) / ((mask) & ~((mask) << 1)))
 #define set_field(reg, mask, val) (((reg) & ~(mask)) | (((val) * ((mask) & ~((mask) << 1))) & (mask)))
 
-#define DIM(x)		(sizeof(x)/sizeof(*x))
-
 #define CSR_DCSR_CAUSE_SWBP		1
 #define CSR_DCSR_CAUSE_TRIGGER	2
 #define CSR_DCSR_CAUSE_DEBUGINT	3
@@ -361,7 +359,7 @@ static void decode_dmi(char *text, unsigned address, unsigned data)
 	};
 
 	text[0] = 0;
-	for (unsigned i = 0; i < DIM(description); i++) {
+	for (unsigned i = 0; i < ARRAY_SIZE(description); i++) {
 		if (description[i].address == address) {
 			uint64_t mask = description[i].mask;
 			unsigned value = get_field(data, mask);
@@ -593,6 +591,8 @@ static int dmi_op_timeout(struct target *target, uint32_t *data_in,
 			return ERROR_FAIL;
 	}
 
+	keep_alive();
+
 	time_t start = time(NULL);
 	/* This first loop performs the request.  Note that if for some reason this
 	 * stays busy, it is actually due to the previous access. */
@@ -695,7 +695,7 @@ int dmstatus_read_timeout(struct target *target, uint32_t *dmstatus,
 		return result;
 	int dmstatus_version = get_field(*dmstatus, DM_DMSTATUS_VERSION);
 	if (dmstatus_version != 2 && dmstatus_version != 3) {
-		LOG_ERROR("OpenOCD only supports Debug Module version 2 (0.13) and 3 (0.14), not "
+		LOG_ERROR("OpenOCD only supports Debug Module version 2 (0.13) and 3 (1.0), not "
 				"%d (dmstatus=0x%x). This error might be caused by a JTAG "
 				"signal issue. Try reducing the JTAG clock speed.",
 				get_field(*dmstatus, DM_DMSTATUS_VERSION), *dmstatus);
@@ -2159,7 +2159,7 @@ static int sample_memory_bus_v1(struct target *target,
 	const unsigned repeat = 5;
 
 	unsigned enabled_count = 0;
-	for (unsigned i = 0; i < DIM(config->bucket); i++) {
+	for (unsigned i = 0; i < ARRAY_SIZE(config->bucket); i++) {
 		if (config->bucket[i].enabled)
 			enabled_count++;
 	}
@@ -2176,7 +2176,7 @@ static int sample_memory_bus_v1(struct target *target,
 
 		unsigned result_bytes = 0;
 		for (unsigned n = 0; n < repeat; n++) {
-			for (unsigned i = 0; i < DIM(config->bucket); i++) {
+			for (unsigned i = 0; i < ARRAY_SIZE(config->bucket); i++) {
 				if (config->bucket[i].enabled) {
 					if (!sba_supports_access(target, config->bucket[i].size_bytes)) {
 						LOG_ERROR("Hardware does not support SBA access for %d-byte memory sampling.",
@@ -2244,7 +2244,7 @@ static int sample_memory_bus_v1(struct target *target,
 
 		unsigned read = 0;
 		for (unsigned n = 0; n < repeat; n++) {
-			for (unsigned i = 0; i < DIM(config->bucket); i++) {
+			for (unsigned i = 0; i < ARRAY_SIZE(config->bucket); i++) {
 				if (config->bucket[i].enabled) {
 					assert(i < RISCV_SAMPLE_BUF_TIMESTAMP_BEFORE);
 					uint64_t value = 0;
@@ -2730,6 +2730,7 @@ static int read_memory_bus_v1(struct target *target, target_addr_t address,
 								  next_read);
 						return ERROR_FAIL;
 					}
+					keep_alive();
 					dmi_status_t status = dmi_scan(target, NULL, &value,
 												   DMI_OP_READ, sbdata[j], 0, false);
 					if (status == DMI_STATUS_BUSY)
@@ -3506,7 +3507,6 @@ static int read_memory_progbuf(struct target *target, target_addr_t address,
 		uint8_t *buffer_i = buffer;
 
 		for (uint32_t i = 0; i < count; i++, address_i += increment, buffer_i += size) {
-			keep_alive();
 			/* TODO: This is much slower than it needs to be because we end up
 			 * writing the address to read for every word we read. */
 			result = read_memory_progbuf_inner(target, address_i, size, count_i, buffer_i, increment);
@@ -4324,6 +4324,8 @@ static enum riscv_halt_reason riscv013_halt_reason(struct target *target)
 	if (result != ERROR_OK)
 		return RISCV_HALT_UNKNOWN;
 
+	LOG_DEBUG("dcsr.cause: 0x%x", (unsigned int)get_field(dcsr, CSR_DCSR_CAUSE));
+
 	switch (get_field(dcsr, CSR_DCSR_CAUSE)) {
 	case CSR_DCSR_CAUSE_SWBP:
 		return RISCV_HALT_BREAKPOINT;
@@ -4343,7 +4345,7 @@ static enum riscv_halt_reason riscv013_halt_reason(struct target *target)
 		return RISCV_HALT_GROUP;
 	}
 
-	LOG_ERROR("Unknown DCSR cause field: %x", (int)get_field(dcsr, CSR_DCSR_CAUSE));
+	LOG_ERROR("Unknown DCSR cause field: 0x%x", (unsigned int)get_field(dcsr, CSR_DCSR_CAUSE));
 	LOG_ERROR("  dcsr=0x%016lx", (long)dcsr);
 	return RISCV_HALT_UNKNOWN;
 }

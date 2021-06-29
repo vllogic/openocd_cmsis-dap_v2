@@ -227,7 +227,7 @@ static int arc_get_register(struct reg *reg)
 
 	if (desc->is_core) {
 		/* Accessing to R61/R62 registers causes Jtag hang */
-		if (desc->arch_num == CORE_R61_NUM || desc->arch_num == CORE_R62_NUM) {
+		if (desc->arch_num == ARC_R61 || desc->arch_num == ARC_R62) {
 			LOG_ERROR("It is forbidden to read core registers 61 and 62.");
 			return ERROR_FAIL;
 		}
@@ -267,8 +267,8 @@ static int arc_set_register(struct reg *reg, uint8_t *buf)
 		return ERROR_TARGET_NOT_HALTED;
 
 	/* Accessing to R61/R62 registers causes Jtag hang */
-	if (desc->is_core && (desc->arch_num == CORE_R61_NUM ||
-			desc->arch_num == CORE_R62_NUM)) {
+	if (desc->is_core && (desc->arch_num == ARC_R61 ||
+			desc->arch_num == ARC_R62)) {
 		LOG_ERROR("It is forbidden to write core registers 61 and 62.");
 		return ERROR_FAIL;
 	}
@@ -1467,7 +1467,7 @@ static int arc_configure_actionpoint(struct target *target, uint32_t ap_num,
 	if (control_tt != AP_AC_TT_DISABLE) {
 
 		if (arc->actionpoints_num_avail < 1) {
-			LOG_ERROR("No free actionpoints, maximim amount is %u",
+			LOG_ERROR("No free actionpoints, maximum amount is %u",
 					arc->actionpoints_num);
 			return ERROR_TARGET_RESOURCE_NOT_AVAILABLE;
 		}

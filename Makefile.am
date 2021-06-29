@@ -2,6 +2,8 @@
 # have all needed files, that a GNU package needs
 AUTOMAKE_OPTIONS = gnu 1.6
 
+.DELETE_ON_ERROR:
+
 # make sure we pass the correct jimtcl flags to distcheck
 DISTCHECK_CONFIGURE_FLAGS = --disable-install-jim
 
@@ -42,7 +44,6 @@ if INTERNAL_JIMTCL
 AM_CPPFLAGS += -I$(top_srcdir)/jimtcl \
 			   -I$(top_builddir)/jimtcl
 endif
-EXTRA_DIST_NEWS != ls $(srcdir)/NEWS-*
 EXTRA_DIST += \
 	BUGS \
 	HACKING \
@@ -51,6 +52,15 @@ EXTRA_DIST += \
 	README.macOS \
 	$(EXTRA_DIST_NEWS) \
 	Doxyfile.in \
+	LICENSES/license-rules.txt \
+	LICENSES/preferred/BSD-1-Clause \
+	LICENSES/preferred/BSD-2-Clause \
+	LICENSES/preferred/BSD-3-Clause \
+	LICENSES/preferred/GFDL-1.2 \
+	LICENSES/preferred/gfdl-1.2.texi.readme \
+	LICENSES/preferred/GPL-2.0 \
+	LICENSES/preferred/MIT \
+	LICENSES/stand-alone/GPL-3.0 \
 	tools/logger.pl \
 	tools/rlink_make_speed_table \
 	tools/st7_dtc_as \
@@ -116,6 +126,8 @@ uninstall-hook:
 distclean-local:
 	rm -rf Doxyfile doxygen
 	rm -f $(srcdir)/jimtcl/configure.gnu
+# FIXME: workaround for jimtcl 0.80 only. Remove from jimtcl 0.81
+	rm -f jimtcl/examples.api/Makefile
 
 # We want every change to have Signed-off-by. This is tricky to enforce in
 # Travis, because it automatically makes temporary commits when merging. So

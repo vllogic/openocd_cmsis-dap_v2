@@ -77,6 +77,7 @@
 #include <jtag/interface.h>
 #include <jtag/commands.h>
 #include <helper/time_support.h>
+#include <helper/replacements.h>
 #include "ublast_access.h"
 
 /* system includes */
@@ -560,8 +561,8 @@ static int ublast_read_byteshifted_tdos(uint8_t *buf, int nb_bytes)
  *  - first bit is stored in byte0, bit0 (LSB)
  *  - second bit is stored in byte0, bit 1
  *  ...
- *  - eight bit is sotred in byte0, bit 7
- *  - ninth bit is sotred in byte1, bit 0
+ *  - eight bit is stored in byte0, bit 7
+ *  - ninth bit is stored in byte1, bit 0
  *  - etc ...
  *
  * Returns ERROR_OK if OK, ERROR_xxx if a read error occurred

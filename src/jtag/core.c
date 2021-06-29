@@ -35,6 +35,7 @@
 #include "interface.h"
 #include <transport/transport.h>
 #include <helper/jep106.h>
+#include "helper/system.h"
 
 #ifdef HAVE_STRINGS_H
 #include <strings.h>
@@ -43,6 +44,9 @@
 /* SVF and XSVF are higher level JTAG command sets (for boundary scan) */
 #include "svf/svf.h"
 #include "xsvf/xsvf.h"
+
+/* ipdbg are utilities to debug IP-cores. It uses JTAG for transport. */
+#include "server/ipdbg.h"
 
 /** The number of JTAG queue flushes (for profiling and debugging purposes). */
 static int jtag_flush_queue_count;
@@ -426,7 +430,6 @@ static void jtag_add_scan_check(struct jtag_tap *active, void (*jtag_add_scan)(
 
 	for (int i = 0; i < in_num_fields; i++) {
 		if ((in_fields[i].check_value != NULL) && (in_fields[i].in_value != NULL)) {
-			/* this is synchronous for a minidriver */
 			jtag_add_callback4(jtag_check_value_mask_callback,
 				(jtag_callback_data_t)in_fields[i].in_value,
 				(jtag_callback_data_t)in_fields[i].check_value,
@@ -487,7 +490,7 @@ void jtag_add_tlr(void)
 
 /**
  * If supported by the underlying adapter, this clocks a raw bit sequence
- * onto TMS for switching betwen JTAG and SWD modes.
+ * onto TMS for switching between JTAG and SWD modes.
  *
  * DO NOT use this to bypass the integrity checks and logging provided
  * by the jtag_add_pathmove() and jtag_add_statemove() calls.
@@ -953,12 +956,6 @@ int default_interface_jtag_execute_queue(void)
 
 	int result = jtag->jtag_ops->execute_queue();
 
-#if !HAVE_JTAG_MINIDRIVER_H
-	/* Only build this if we use a regular driver with a command queue.
-	 * Otherwise jtag_command_queue won't be found at compile/link time. Its
-	 * definition is in jtag/commands.c, which is only built/linked by
-	 * jtag/Makefile.am if MINIDRIVER_DUMMY || !MINIDRIVER, but those variables
-	 * aren't accessible here. Use HAVE_JTAG_MINIDRIVER_H */
 	struct jtag_command *cmd = jtag_command_queue;
 	while (debug_level >= LOG_LVL_DEBUG_IO && cmd) {
 		switch (cmd->type) {
@@ -1017,7 +1014,6 @@ int default_interface_jtag_execute_queue(void)
 		}
 		cmd = cmd->next;
 	}
-#endif
 
 	return result;
 }
@@ -1347,7 +1343,7 @@ static int jtag_validate_ircapture(void)
 	int chain_pos = 0;
 	int retval;
 
-	/* when autoprobing, accomodate huge IR lengths */
+	/* when autoprobing, accommodate huge IR lengths */
 	for (tap = NULL, total_ir_length = 0;
 			(tap = jtag_tap_next_enabled(tap)) != NULL;
 			total_ir_length += tap->ir_length) {
@@ -1459,7 +1455,7 @@ void jtag_tap_init(struct jtag_tap *tap)
 	unsigned ir_len_bytes;
 
 	/* if we're autoprobing, cope with potentially huge ir_length */
-	ir_len_bits = tap->ir_length ? : JTAG_IRLEN_MAX;
+	ir_len_bits = tap->ir_length ? tap->ir_length : JTAG_IRLEN_MAX;
 	ir_len_bytes = DIV_ROUND_UP(ir_len_bits, 8);
 
 	tap->expected = calloc(1, ir_len_bytes);
@@ -1982,7 +1978,12 @@ static int jtag_select(struct command_context *ctx)
 	if (retval != ERROR_OK)
 		return retval;
 
-	return xsvf_register_commands(ctx);
+	retval = xsvf_register_commands(ctx);
+
+	if (retval != ERROR_OK)
+		return retval;
+
+	return ipdbg_register_commands(ctx);
 }
 
 static struct transport jtag_transport = {

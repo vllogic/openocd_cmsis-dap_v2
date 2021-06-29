@@ -39,7 +39,7 @@ static bool ThreadX_detect_rtos(struct target *target);
 static int ThreadX_create(struct target *target);
 static int ThreadX_update_threads(struct rtos *rtos);
 static int ThreadX_get_thread_reg_list(struct rtos *rtos, int64_t thread_id, struct rtos_reg **reg_list, int *num_regs);
-static int ThreadX_get_symbol_list_to_lookup(symbol_table_elem_t *symbol_list[]);
+static int ThreadX_get_symbol_list_to_lookup(struct symbol_table_elem *symbol_list[]);
 
 
 
@@ -65,7 +65,7 @@ static const struct ThreadX_thread_state ThreadX_thread_states[] = {
 	{ 13, "Waiting - Mutex" },
 };
 
-#define THREADX_NUM_STATES (sizeof(ThreadX_thread_states)/sizeof(struct ThreadX_thread_state))
+#define THREADX_NUM_STATES ARRAY_SIZE(ThreadX_thread_states)
 
 #define ARM926EJS_REGISTERS_SIZE_SOLICITED (11 * 4)
 static const struct stack_register_offset rtos_threadx_arm926ejs_stack_offsets_solicited[] = {
@@ -112,18 +112,16 @@ static const struct stack_register_offset rtos_threadx_arm926ejs_stack_offsets_i
 
 static const struct rtos_register_stacking rtos_threadx_arm926ejs_stacking[] = {
 {
-	ARM926EJS_REGISTERS_SIZE_SOLICITED,	/* stack_registers_size */
-	-1,									/* stack_growth_direction */
-	17,									/* num_output_registers */
-	NULL,								/* stack_alignment */
-	rtos_threadx_arm926ejs_stack_offsets_solicited	/* register_offsets */
+	.stack_registers_size = ARM926EJS_REGISTERS_SIZE_SOLICITED,
+	.stack_growth_direction = -1,
+	.num_output_registers = 17,
+	.register_offsets = rtos_threadx_arm926ejs_stack_offsets_solicited
 },
 {
-	ARM926EJS_REGISTERS_SIZE_INTERRUPT,	/* stack_registers_size */
-	-1,									/* stack_growth_direction */
-	17,									/* num_output_registers */
-	NULL,								/* stack_alignment */
-	rtos_threadx_arm926ejs_stack_offsets_interrupt	/* register_offsets */
+	.stack_registers_size = ARM926EJS_REGISTERS_SIZE_INTERRUPT,
+	.stack_growth_direction = -1,
+	.num_output_registers = 17,
+	.register_offsets = rtos_threadx_arm926ejs_stack_offsets_interrupt
 },
 };
 
@@ -178,8 +176,6 @@ static const struct ThreadX_params ThreadX_params_list[] = {
 	is_thread_id_valid_arm926ejs,		/* fn_is_thread_id_valid */
 	},
 };
-
-#define THREADX_NUM_PARAMS ((int)(sizeof(ThreadX_params_list)/sizeof(struct ThreadX_params)))
 
 enum ThreadX_symbol_values {
 	ThreadX_VAL_tx_thread_current_ptr = 0,
@@ -479,11 +475,11 @@ static int ThreadX_get_thread_reg_list(struct rtos *rtos, int64_t thread_id,
 	return rtos_generic_stack_read(rtos->target, stacking_info, stack_ptr, reg_list, num_regs);
 }
 
-static int ThreadX_get_symbol_list_to_lookup(symbol_table_elem_t *symbol_list[])
+static int ThreadX_get_symbol_list_to_lookup(struct symbol_table_elem *symbol_list[])
 {
 	unsigned int i;
 	*symbol_list = calloc(
-			ARRAY_SIZE(ThreadX_symbol_list), sizeof(symbol_table_elem_t));
+			ARRAY_SIZE(ThreadX_symbol_list), sizeof(struct symbol_table_elem));
 
 	for (i = 0; i < ARRAY_SIZE(ThreadX_symbol_list); i++)
 		(*symbol_list)[i].symbol_name = ThreadX_symbol_list[i];
@@ -599,18 +595,14 @@ static int ThreadX_get_thread_detail(struct rtos *rtos,
 
 static int ThreadX_create(struct target *target)
 {
-	int i = 0;
-	while ((i < THREADX_NUM_PARAMS) &&
-			(0 != strcmp(ThreadX_params_list[i].target_name, target->type->name))) {
-		i++;
-	}
-	if (i >= THREADX_NUM_PARAMS) {
-		LOG_ERROR("Could not find target in ThreadX compatibility list");
-		return -1;
-	}
+	for (unsigned int i = 0; i < ARRAY_SIZE(ThreadX_params_list); i++)
+		if (strcmp(ThreadX_params_list[i].target_name, target->type->name) == 0) {
+			target->rtos->rtos_specific_params = (void *)&ThreadX_params_list[i];
+			target->rtos->current_thread = 0;
+			target->rtos->thread_details = NULL;
+			return 0;
+		}
 
-	target->rtos->rtos_specific_params = (void *) &ThreadX_params_list[i];
-	target->rtos->current_thread = 0;
-	target->rtos->thread_details = NULL;
-	return 0;
+	LOG_ERROR("Could not find target in ThreadX compatibility list");
+	return -1;
 }

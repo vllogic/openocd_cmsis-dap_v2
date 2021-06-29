@@ -19,11 +19,12 @@
 #include "config.h"
 #endif
 
+#include "versaloon_include.h"
+
 #include <stdio.h>
 #include <string.h>
 #include <libusb.h>
 
-#include "versaloon_include.h"
 #include "versaloon.h"
 #include "versaloon_internal.h"
 #include "usbtoxxx/usbtoxxx.h"
@@ -35,7 +36,7 @@ uint16_t versaloon_buf_size;
 struct versaloon_pending_t versaloon_pending[VERSALOON_MAX_PENDING_NUMBER];
 uint16_t versaloon_pending_idx;
 
-libusb_device_handle *versaloon_usb_device_handle;
+struct libusb_device_handle *versaloon_usb_device_handle;
 static uint32_t versaloon_usb_to = VERSALOON_TIMEOUT;
 
 static RESULT versaloon_init(void);
@@ -123,7 +124,7 @@ void versaloon_free_want_pos(void)
 	}
 	versaloon_want_pos = NULL;
 
-	for (i = 0; i < dimof(versaloon_pending); i++) {
+	for (i = 0; i < ARRAY_SIZE(versaloon_pending); i++) {
 		tmp = versaloon_pending[i].pos;
 		while (tmp != NULL) {
 			free_tmp = tmp;

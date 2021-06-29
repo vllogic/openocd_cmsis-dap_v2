@@ -133,6 +133,7 @@ static int aarch64_mmu_modify(struct target *target, int enable)
 	struct aarch64_common *aarch64 = target_to_aarch64(target);
 	struct armv8_common *armv8 = &aarch64->armv8_common;
 	int retval = ERROR_OK;
+	enum arm_mode target_mode = ARM_MODE_ANY;
 	uint32_t instr = 0;
 
 	if (enable) {
@@ -158,6 +159,8 @@ static int aarch64_mmu_modify(struct target *target, int enable)
 
 	switch (armv8->arm.core_mode) {
 	case ARMV8_64_EL0T:
+		target_mode = ARMV8_64_EL1H;
+		/* fall through */
 	case ARMV8_64_EL1T:
 	case ARMV8_64_EL1H:
 		instr = ARMV8_MSR_GP(SYSTEM_SCTLR_EL1, 0);
@@ -184,9 +187,15 @@ static int aarch64_mmu_modify(struct target *target, int enable)
 		LOG_DEBUG("unknown cpu state 0x%x", armv8->arm.core_mode);
 		break;
 	}
+	if (target_mode != ARM_MODE_ANY)
+		armv8_dpm_modeswitch(&armv8->dpm, target_mode);
 
 	retval = armv8->dpm.instr_write_data_r0(&armv8->dpm, instr,
 				aarch64->system_control_reg_curr);
+
+	if (target_mode != ARM_MODE_ANY)
+		armv8_dpm_modeswitch(&armv8->dpm, ARM_MODE_ANY);
+
 	return retval;
 }
 
@@ -979,25 +988,26 @@ static int aarch64_debug_entry(struct target *target)
 	/* Examine debug reason */
 	armv8_dpm_report_dscr(dpm, dscr);
 
-	/* save address of instruction that triggered the watchpoint? */
+	/* save the memory address that triggered the watchpoint */
 	if (target->debug_reason == DBG_REASON_WATCHPOINT) {
 		uint32_t tmp;
-		uint64_t wfar = 0;
 
 		retval = mem_ap_read_atomic_u32(armv8->debug_ap,
-				armv8->debug_base + CPUV8_DBG_WFAR1,
-				&tmp);
+				armv8->debug_base + CPUV8_DBG_EDWAR0, &tmp);
 		if (retval != ERROR_OK)
 			return retval;
-		wfar = tmp;
-		wfar = (wfar << 32);
-		retval = mem_ap_read_atomic_u32(armv8->debug_ap,
-				armv8->debug_base + CPUV8_DBG_WFAR0,
-				&tmp);
-		if (retval != ERROR_OK)
-			return retval;
-		wfar |= tmp;
-		armv8_dpm_report_wfar(&armv8->dpm, wfar);
+		target_addr_t edwar = tmp;
+
+		/* EDWAR[63:32] has unknown content in aarch32 state */
+		if (core_state == ARM_STATE_AARCH64) {
+			retval = mem_ap_read_atomic_u32(armv8->debug_ap,
+					armv8->debug_base + CPUV8_DBG_EDWAR1, &tmp);
+			if (retval != ERROR_OK)
+				return retval;
+			edwar |= ((target_addr_t)tmp) << 32;
+		}
+
+		armv8->dpm.wp_addr = edwar;
 	}
 
 	retval = armv8_dpm_read_current_registers(&armv8->dpm);
@@ -1651,7 +1661,6 @@ static int aarch64_add_hybrid_breakpoint(struct target *target,
 	return aarch64_set_hybrid_breakpoint(target, breakpoint);	/* ??? */
 }
 
-
 static int aarch64_remove_breakpoint(struct target *target, struct breakpoint *breakpoint)
 {
 	struct aarch64_common *aarch64 = target_to_aarch64(target);
@@ -1673,26 +1682,295 @@ static int aarch64_remove_breakpoint(struct target *target, struct breakpoint *b
 	return ERROR_OK;
 }
 
+/* Setup hardware Watchpoint Register Pair */
+static int aarch64_set_watchpoint(struct target *target,
+	struct watchpoint *watchpoint)
+{
+	int retval;
+	int wp_i = 0;
+	uint32_t control, offset, length;
+	struct aarch64_common *aarch64 = target_to_aarch64(target);
+	struct armv8_common *armv8 = &aarch64->armv8_common;
+	struct aarch64_brp *wp_list = aarch64->wp_list;
+
+	if (watchpoint->set) {
+		LOG_WARNING("watchpoint already set");
+		return ERROR_OK;
+	}
+
+	while (wp_list[wp_i].used && (wp_i < aarch64->wp_num))
+		wp_i++;
+	if (wp_i >= aarch64->wp_num) {
+		LOG_ERROR("ERROR Can not find free Watchpoint Register Pair");
+		return ERROR_TARGET_RESOURCE_NOT_AVAILABLE;
+	}
+
+	control = (1 << 0)      /* enable */
+		| (3 << 1)      /* both user and privileged access */
+		| (1 << 13);    /* higher mode control */
+
+	switch (watchpoint->rw) {
+	case WPT_READ:
+		control |= 1 << 3;
+		break;
+	case WPT_WRITE:
+		control |= 2 << 3;
+		break;
+	case WPT_ACCESS:
+		control |= 3 << 3;
+		break;
+	}
+
+	/* Match up to 8 bytes. */
+	offset = watchpoint->address & 7;
+	length = watchpoint->length;
+	if (offset + length > sizeof(uint64_t)) {
+		length = sizeof(uint64_t) - offset;
+		LOG_WARNING("Adjust watchpoint match inside 8-byte boundary");
+	}
+	for (; length > 0; offset++, length--)
+		control |= (1 << offset) << 5;
+
+	wp_list[wp_i].value = watchpoint->address & 0xFFFFFFFFFFFFFFF8ULL;
+	wp_list[wp_i].control = control;
+
+	retval = aarch64_dap_write_memap_register_u32(target, armv8->debug_base
+			+ CPUV8_DBG_WVR_BASE + 16 * wp_list[wp_i].BRPn,
+			(uint32_t)(wp_list[wp_i].value & 0xFFFFFFFF));
+	if (retval != ERROR_OK)
+		return retval;
+	retval = aarch64_dap_write_memap_register_u32(target, armv8->debug_base
+			+ CPUV8_DBG_WVR_BASE + 4 + 16 * wp_list[wp_i].BRPn,
+			(uint32_t)(wp_list[wp_i].value >> 32));
+	if (retval != ERROR_OK)
+		return retval;
+
+	retval = aarch64_dap_write_memap_register_u32(target, armv8->debug_base
+			+ CPUV8_DBG_WCR_BASE + 16 * wp_list[wp_i].BRPn,
+			control);
+	if (retval != ERROR_OK)
+		return retval;
+	LOG_DEBUG("wp %i control 0x%0" PRIx32 " value 0x%" TARGET_PRIxADDR, wp_i,
+		wp_list[wp_i].control, wp_list[wp_i].value);
+
+	/* Ensure that halting debug mode is enable */
+	retval = aarch64_set_dscr_bits(target, DSCR_HDE, DSCR_HDE);
+	if (retval != ERROR_OK) {
+		LOG_DEBUG("Failed to set DSCR.HDE");
+		return retval;
+	}
+
+	wp_list[wp_i].used = 1;
+	watchpoint->set = wp_i + 1;
+
+	return ERROR_OK;
+}
+
+/* Clear hardware Watchpoint Register Pair */
+static int aarch64_unset_watchpoint(struct target *target,
+	struct watchpoint *watchpoint)
+{
+	int retval, wp_i;
+	struct aarch64_common *aarch64 = target_to_aarch64(target);
+	struct armv8_common *armv8 = &aarch64->armv8_common;
+	struct aarch64_brp *wp_list = aarch64->wp_list;
+
+	if (!watchpoint->set) {
+		LOG_WARNING("watchpoint not set");
+		return ERROR_OK;
+	}
+
+	wp_i = watchpoint->set - 1;
+	if ((wp_i < 0) || (wp_i >= aarch64->wp_num)) {
+		LOG_DEBUG("Invalid WP number in watchpoint");
+		return ERROR_OK;
+	}
+	LOG_DEBUG("rwp %i control 0x%0" PRIx32 " value 0x%0" PRIx64, wp_i,
+		wp_list[wp_i].control, wp_list[wp_i].value);
+	wp_list[wp_i].used = 0;
+	wp_list[wp_i].value = 0;
+	wp_list[wp_i].control = 0;
+	retval = aarch64_dap_write_memap_register_u32(target, armv8->debug_base
+			+ CPUV8_DBG_WCR_BASE + 16 * wp_list[wp_i].BRPn,
+			wp_list[wp_i].control);
+	if (retval != ERROR_OK)
+		return retval;
+	retval = aarch64_dap_write_memap_register_u32(target, armv8->debug_base
+			+ CPUV8_DBG_WVR_BASE + 16 * wp_list[wp_i].BRPn,
+			wp_list[wp_i].value);
+	if (retval != ERROR_OK)
+		return retval;
+
+	retval = aarch64_dap_write_memap_register_u32(target, armv8->debug_base
+			+ CPUV8_DBG_WVR_BASE + 4 + 16 * wp_list[wp_i].BRPn,
+			(uint32_t)wp_list[wp_i].value);
+	if (retval != ERROR_OK)
+		return retval;
+	watchpoint->set = 0;
+
+	return ERROR_OK;
+}
+
+static int aarch64_add_watchpoint(struct target *target,
+	struct watchpoint *watchpoint)
+{
+	int retval;
+	struct aarch64_common *aarch64 = target_to_aarch64(target);
+
+	if (aarch64->wp_num_available < 1) {
+		LOG_INFO("no hardware watchpoint available");
+		return ERROR_TARGET_RESOURCE_NOT_AVAILABLE;
+	}
+
+	retval = aarch64_set_watchpoint(target, watchpoint);
+	if (retval == ERROR_OK)
+		aarch64->wp_num_available--;
+
+	return retval;
+}
+
+static int aarch64_remove_watchpoint(struct target *target,
+	struct watchpoint *watchpoint)
+{
+	struct aarch64_common *aarch64 = target_to_aarch64(target);
+
+	if (watchpoint->set) {
+		aarch64_unset_watchpoint(target, watchpoint);
+		aarch64->wp_num_available++;
+	}
+
+	return ERROR_OK;
+}
+
+/**
+ * find out which watchpoint hits
+ * get exception address and compare the address to watchpoints
+ */
+int aarch64_hit_watchpoint(struct target *target,
+	struct watchpoint **hit_watchpoint)
+{
+	if (target->debug_reason != DBG_REASON_WATCHPOINT)
+		return ERROR_FAIL;
+
+	struct armv8_common *armv8 = target_to_armv8(target);
+
+	target_addr_t exception_address;
+	struct watchpoint *wp;
+
+	exception_address = armv8->dpm.wp_addr;
+
+	if (exception_address == 0xFFFFFFFF)
+		return ERROR_FAIL;
+
+	for (wp = target->watchpoints; wp; wp = wp->next)
+		if (exception_address >= wp->address && exception_address < (wp->address + wp->length)) {
+			*hit_watchpoint = wp;
+			return ERROR_OK;
+		}
+
+	return ERROR_FAIL;
+}
+
 /*
  * Cortex-A8 Reset functions
  */
 
+static int aarch64_enable_reset_catch(struct target *target, bool enable)
+{
+	struct armv8_common *armv8 = target_to_armv8(target);
+	uint32_t edecr;
+	int retval;
+
+	retval = mem_ap_read_atomic_u32(armv8->debug_ap,
+			armv8->debug_base + CPUV8_DBG_EDECR, &edecr);
+	LOG_DEBUG("EDECR = 0x%08" PRIx32 ", enable=%d", edecr, enable);
+	if (retval != ERROR_OK)
+		return retval;
+
+	if (enable)
+		edecr |= ECR_RCE;
+	else
+		edecr &= ~ECR_RCE;
+
+	return mem_ap_write_atomic_u32(armv8->debug_ap,
+			armv8->debug_base + CPUV8_DBG_EDECR, edecr);
+}
+
+static int aarch64_clear_reset_catch(struct target *target)
+{
+	struct armv8_common *armv8 = target_to_armv8(target);
+	uint32_t edesr;
+	int retval;
+	bool was_triggered;
+
+	/* check if Reset Catch debug event triggered as expected */
+	retval = mem_ap_read_atomic_u32(armv8->debug_ap,
+		armv8->debug_base + CPUV8_DBG_EDESR, &edesr);
+	if (retval != ERROR_OK)
+		return retval;
+
+	was_triggered = !!(edesr & ESR_RC);
+	LOG_DEBUG("Reset Catch debug event %s",
+			was_triggered ? "triggered" : "NOT triggered!");
+
+	if (was_triggered) {
+		/* clear pending Reset Catch debug event */
+		edesr &= ~ESR_RC;
+		retval = mem_ap_write_atomic_u32(armv8->debug_ap,
+			armv8->debug_base + CPUV8_DBG_EDESR, edesr);
+		if (retval != ERROR_OK)
+			return retval;
+	}
+
+	return ERROR_OK;
+}
+
 static int aarch64_assert_reset(struct target *target)
 {
 	struct armv8_common *armv8 = target_to_armv8(target);
+	enum reset_types reset_config = jtag_get_reset_config();
+	int retval;
 
 	LOG_DEBUG(" ");
-
-	/* FIXME when halt is requested, make it work somehow... */
 
 	/* Issue some kind of warm reset. */
 	if (target_has_event_action(target, TARGET_EVENT_RESET_ASSERT))
 		target_handle_event(target, TARGET_EVENT_RESET_ASSERT);
-	else if (jtag_get_reset_config() & RESET_HAS_SRST) {
+	else if (reset_config & RESET_HAS_SRST) {
+		bool srst_asserted = false;
+
+		if (target->reset_halt) {
+			if (target_was_examined(target)) {
+
+				if (reset_config & RESET_SRST_NO_GATING) {
+					/*
+					 * SRST needs to be asserted *before* Reset Catch
+					 * debug event can be set up.
+					 */
+					adapter_assert_reset();
+					srst_asserted = true;
+
+					/* make sure to clear all sticky errors */
+					mem_ap_write_atomic_u32(armv8->debug_ap,
+							armv8->debug_base + CPUV8_DBG_DRCR, DRCR_CSE);
+				}
+
+				/* set up Reset Catch debug event to halt the CPU after reset */
+				retval = aarch64_enable_reset_catch(target, true);
+				if (retval != ERROR_OK)
+					LOG_WARNING("%s: Error enabling Reset Catch debug event; the CPU will not halt immediately after reset!",
+							target_name(target));
+			} else {
+				LOG_WARNING("%s: Target not examined, will not halt immediately after reset!",
+						target_name(target));
+			}
+		}
+
 		/* REVISIT handle "pulls" cases, if there's
 		 * hardware that needs them to work.
 		 */
-		adapter_assert_reset();
+		if (!srst_asserted)
+			adapter_assert_reset();
 	} else {
 		LOG_ERROR("%s: how to reset?", target_name(target));
 		return ERROR_FAIL;
@@ -1721,23 +1999,37 @@ static int aarch64_deassert_reset(struct target *target)
 	if (!target_was_examined(target))
 		return ERROR_OK;
 
-	retval = aarch64_poll(target);
-	if (retval != ERROR_OK)
-		return retval;
-
 	retval = aarch64_init_debug_access(target);
 	if (retval != ERROR_OK)
 		return retval;
 
+	retval = aarch64_poll(target);
+	if (retval != ERROR_OK)
+		return retval;
+
 	if (target->reset_halt) {
+		/* clear pending Reset Catch debug event */
+		retval = aarch64_clear_reset_catch(target);
+		if (retval != ERROR_OK)
+			LOG_WARNING("%s: Clearing Reset Catch debug event failed",
+					target_name(target));
+
+		/* disable Reset Catch debug event */
+		retval = aarch64_enable_reset_catch(target, false);
+		if (retval != ERROR_OK)
+			LOG_WARNING("%s: Disabling Reset Catch debug event failed",
+					target_name(target));
+
 		if (target->state != TARGET_HALTED) {
 			LOG_WARNING("%s: ran after reset and before halt ...",
 				target_name(target));
 			retval = target_halt(target);
+			if (retval != ERROR_OK)
+				return retval;
 		}
 	}
 
-	return retval;
+	return ERROR_OK;
 }
 
 static int aarch64_write_cpu_memory_slow(struct target *target,
@@ -2367,7 +2659,20 @@ static int aarch64_examine_first(struct target *target)
 		aarch64->brp_list[i].BRPn = i;
 	}
 
-	LOG_DEBUG("Configured %i hw breakpoints", aarch64->brp_num);
+	/* Setup Watchpoint Register Pairs */
+	aarch64->wp_num = (uint32_t)((debug >> 20) & 0x0F) + 1;
+	aarch64->wp_num_available = aarch64->wp_num;
+	aarch64->wp_list = calloc(aarch64->wp_num, sizeof(struct aarch64_brp));
+	for (i = 0; i < aarch64->wp_num; i++) {
+		aarch64->wp_list[i].used = 0;
+		aarch64->wp_list[i].type = BRP_NORMAL;
+		aarch64->wp_list[i].value = 0;
+		aarch64->wp_list[i].control = 0;
+		aarch64->wp_list[i].BRPn = i;
+	}
+
+	LOG_DEBUG("Configured %i hw breakpoints, %i watchpoints",
+		aarch64->brp_num, aarch64->wp_num);
 
 	target->state = TARGET_UNKNOWN;
 	target->debug_reason = DBG_REASON_NOTHALTED;
@@ -2480,15 +2785,15 @@ enum aarch64_cfg_param {
 	CFG_CTI,
 };
 
-static const Jim_Nvp nvp_config_opts[] = {
+static const struct jim_nvp nvp_config_opts[] = {
 	{ .name = "-cti", .value = CFG_CTI },
 	{ .name = NULL, .value = -1 }
 };
 
-static int aarch64_jim_configure(struct target *target, Jim_GetOptInfo *goi)
+static int aarch64_jim_configure(struct target *target, struct jim_getopt_info *goi)
 {
 	struct aarch64_private_config *pc;
-	Jim_Nvp *n;
+	struct jim_nvp *n;
 	int e;
 
 	pc = (struct aarch64_private_config *)target->private_config;
@@ -2519,12 +2824,12 @@ static int aarch64_jim_configure(struct target *target, Jim_GetOptInfo *goi)
 		Jim_SetEmptyResult(goi->interp);
 
 		/* check first if topmost item is for us */
-		e = Jim_Nvp_name2value_obj(goi->interp, nvp_config_opts,
+		e = jim_nvp_name2value_obj(goi->interp, nvp_config_opts,
 				goi->argv[0], &n);
 		if (e != JIM_OK)
 			return JIM_CONTINUE;
 
-		e = Jim_GetOpt_Obj(goi, NULL);
+		e = jim_getopt_obj(goi, NULL);
 		if (e != JIM_OK)
 			return e;
 
@@ -2533,7 +2838,7 @@ static int aarch64_jim_configure(struct target *target, Jim_GetOptInfo *goi)
 			if (goi->isconfigure) {
 				Jim_Obj *o_cti;
 				struct arm_cti *cti;
-				e = Jim_GetOpt_Obj(goi, &o_cti);
+				e = jim_getopt_obj(goi, &o_cti);
 				if (e != JIM_OK)
 					return e;
 				cti = cti_instance_by_jim_obj(goi->interp, o_cti);
@@ -2625,15 +2930,15 @@ COMMAND_HANDLER(aarch64_mask_interrupts_command)
 	struct target *target = get_current_target(CMD_CTX);
 	struct aarch64_common *aarch64 = target_to_aarch64(target);
 
-	static const Jim_Nvp nvp_maskisr_modes[] = {
+	static const struct jim_nvp nvp_maskisr_modes[] = {
 		{ .name = "off", .value = AARCH64_ISRMASK_OFF },
 		{ .name = "on", .value = AARCH64_ISRMASK_ON },
 		{ .name = NULL, .value = -1 },
 	};
-	const Jim_Nvp *n;
+	const struct jim_nvp *n;
 
 	if (CMD_ARGC > 0) {
-		n = Jim_Nvp_name2value_simple(nvp_maskisr_modes, CMD_ARGV[0]);
+		n = jim_nvp_name2value_simple(nvp_maskisr_modes, CMD_ARGV[0]);
 		if (n->name == NULL) {
 			LOG_ERROR("Unknown parameter: %s - should be off or on", CMD_ARGV[0]);
 			return ERROR_COMMAND_SYNTAX_ERROR;
@@ -2642,7 +2947,7 @@ COMMAND_HANDLER(aarch64_mask_interrupts_command)
 		aarch64->isrmasking_mode = n->value;
 	}
 
-	n = Jim_Nvp_value2name_simple(nvp_maskisr_modes, aarch64->isrmasking_mode);
+	n = jim_nvp_value2name_simple(nvp_maskisr_modes, aarch64->isrmasking_mode);
 	command_print(CMD, "aarch64 interrupt mask %s", n->name);
 
 	return ERROR_OK;
@@ -2650,6 +2955,7 @@ COMMAND_HANDLER(aarch64_mask_interrupts_command)
 
 static int jim_mcrmrc(Jim_Interp *interp, int argc, Jim_Obj * const *argv)
 {
+	struct command *c = jim_to_command(interp);
 	struct command_context *context;
 	struct target *target;
 	struct arm *arm;
@@ -2657,7 +2963,7 @@ static int jim_mcrmrc(Jim_Interp *interp, int argc, Jim_Obj * const *argv)
 	bool is_mcr = false;
 	int arg_cnt = 0;
 
-	if (Jim_CompareStringImmediate(interp, argv[0], "mcr")) {
+	if (!strcmp(c->name, "mcr")) {
 		is_mcr = true;
 		arg_cnt = 7;
 	} else {
@@ -2883,8 +3189,9 @@ struct target_type aarch64_target = {
 	.add_context_breakpoint = aarch64_add_context_breakpoint,
 	.add_hybrid_breakpoint = aarch64_add_hybrid_breakpoint,
 	.remove_breakpoint = aarch64_remove_breakpoint,
-	.add_watchpoint = NULL,
-	.remove_watchpoint = NULL,
+	.add_watchpoint = aarch64_add_watchpoint,
+	.remove_watchpoint = aarch64_remove_watchpoint,
+	.hit_watchpoint = aarch64_hit_watchpoint,
 
 	.commands = aarch64_command_handlers,
 	.target_create = aarch64_target_create,
