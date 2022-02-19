@@ -25,6 +25,10 @@
 #include <target/algorithm.h>
 #include <target/armv7m.h>
 
+#ifndef dimof
+#   define dimof(arr)                       (sizeof(arr) / sizeof((arr)[0]))
+#endif
+
 /*
 	struct aic8800_rom_falsh_api_t {
 		void (*undefined_api_0)(void);
@@ -38,7 +42,7 @@
 		void (*CacheInvalidRange)(uint32_t addr, uint32_t len);
 	} aic8800_rom_falsh_api @ 0x00000180UL;
 */
-#define AIC8800_ROM_APITBL_BASE		((uint32_t *)0x00000180UL)
+#define AIC8800_ROM_APITBL_BASE		(0x00000180UL)
 
 #define AIC8800_FLASH_BASE			0x08000000
 #define AIC8800_FLASH_SECSIZE		0x1000
@@ -86,10 +90,10 @@ static int romapi_ChipSizeGet(struct flash_bank *bank, uint32_t *chip_size)
 	init_reg_param(&reg_params[0], "r0", 32, PARAM_IN);
 	init_reg_param(&reg_params[1], "sp", 32, PARAM_OUT);
 	//buf_set_u32(reg_params[0].value, 0, 32, 0);
-	buf_set_u32(reg_params[1].value, 0, 32, algorithm->address + sysreq_wait_algorithm->size);
+	buf_set_u32(reg_params[1].value, 0, 32, algorithm->address + algorithm->size);
 
 	retval = target_run_algorithm(target, 0, NULL, dimof(reg_params), reg_params,
-									algorithm->address, algorithm->address + sizeof(aic8800_rom_api_call_code_t) - 6,
+									algorithm->address, algorithm->address + sizeof(struct aic8800_rom_api_call_code_t) - 6,
 									TIMEROUT_DEFAULT, &aic8800_bank->armv7m_info);
 	if (retval == ERROR_OK) {
 		*chip_size = buf_get_u32(reg_params[0].value, 0, 32);
@@ -117,10 +121,10 @@ static int romapi_ChipErase(struct flash_bank *bank)
 									(const uint8_t *)&aic8800_bank->rom_api_call_code[3]);
 
 	init_reg_param(&reg_params[0], "sp", 32, PARAM_OUT);
-	buf_set_u32(reg_params[0].value, 0, 32, algorithm->address + sysreq_wait_algorithm->size);
+	buf_set_u32(reg_params[0].value, 0, 32, algorithm->address + algorithm->size);
 
 	retval = target_run_algorithm(target, 0, NULL, dimof(reg_params), reg_params,
-									algorithm->address, algorithm->address + sizeof(aic8800_rom_api_call_code_t) - 6,
+									algorithm->address, algorithm->address + sizeof(struct aic8800_rom_api_call_code_t) - 6,
 									timeout, &aic8800_bank->armv7m_info);
 	if (retval == ERROR_OK) {
 	}
@@ -149,10 +153,10 @@ static uint32_t romapi_Erase(struct flash_bank *bank, uint32_t addr_4k, uint32_t
 	init_reg_param(&reg_params[2], "sp", 32, PARAM_OUT);
 	buf_set_u32(reg_params[0].value, 0, 32, addr_4k);
 	buf_set_u32(reg_params[1].value, 0, 32, len);
-	buf_set_u32(reg_params[2].value, 0, 32, algorithm->address + sysreq_wait_algorithm->size);
+	buf_set_u32(reg_params[2].value, 0, 32, algorithm->address + algorithm->size);
 
 	retval = target_run_algorithm(target, 0, NULL, dimof(reg_params), reg_params,
-									algorithm->address, algorithm->address + sizeof(aic8800_rom_api_call_code_t) - 6,
+									algorithm->address, algorithm->address + sizeof(struct aic8800_rom_api_call_code_t) - 6,
 									TIMEROUT_ERASE_4K * ((len + 4095) / 4096), &aic8800_bank->armv7m_info);
 	if (retval == ERROR_OK) {
 	}
@@ -187,21 +191,27 @@ static int romapi_Write(struct flash_bank *bank, uint32_t addr_256, uint32_t len
 	init_reg_param(&reg_params[2], "sp", 32, PARAM_OUT);
 
 	while (len) {
-		uint32_t block = min(len, 4096);
+		uint32_t block;
+		if (len <= 4096) {
+			block = len;
+		} else {
+			block = 4096;
+		}
 
 
 
-		len -= 4096;
+
+		len -= block;
 	}
 
 
 	//buf_set_u32(reg_params[0].value, 0, 32, addr_4k);
 	//buf_set_u32(reg_params[1].value, 0, 32, len);
 	//buf_set_u32(reg_params[2].value, 0, 32, len);
-	buf_set_u32(reg_params[2].value, 0, 32, algorithm->address + sysreq_wait_algorithm->size);
+	buf_set_u32(reg_params[2].value, 0, 32, algorithm->address + algorithm->size);
 
 	retval = target_run_algorithm(target, 0, NULL, dimof(reg_params), reg_params,
-									algorithm->address, algorithm->address + sizeof(aic8800_rom_api_call_code_t) - 6,
+									algorithm->address, algorithm->address + sizeof(struct aic8800_rom_api_call_code_t) - 6,
 									TIMEROUT_ERASE_4K * ((len + 4095) / 4096), &aic8800_bank->armv7m_info);
 	if (retval == ERROR_OK) {
 	}
@@ -214,7 +224,7 @@ static int romapi_Write(struct flash_bank *bank, uint32_t addr_256, uint32_t len
 	return retval;
 }
 
-static uint32_t romapi_CacheInvalidAll(struct flash_bank *bank)
+static int romapi_CacheInvalidAll(struct flash_bank *bank)
 {
 	int retval;
 	struct working_area *algorithm;
@@ -228,19 +238,21 @@ static uint32_t romapi_CacheInvalidAll(struct flash_bank *bank)
 									(const uint8_t *)&aic8800_bank->rom_api_call_code[7]);
 
 	init_reg_param(&reg_params[0], "sp", 32, PARAM_OUT);
-	buf_set_u32(reg_params[0].value, 0, 32, algorithm->address + sysreq_wait_algorithm->size);
+	buf_set_u32(reg_params[0].value, 0, 32, algorithm->address + algorithm->size);
 
 	retval = target_run_algorithm(target, 0, NULL, dimof(reg_params), reg_params,
-									algorithm->address, algorithm->address + sizeof(aic8800_rom_api_call_code_t) - 6,
+									algorithm->address, algorithm->address + sizeof(struct aic8800_rom_api_call_code_t) - 6,
 									TIMEROUT_DEFAULT, &aic8800_bank->armv7m_info);
 	if (retval == ERROR_OK) {
 	}
 
 	target_free_working_area(target, algorithm);
 	destroy_reg_param(&reg_params[0]);
+
+	return retval;
 }
 
-static uint32_t romapi_CacheInvalidRange(struct flash_bank *bank, uint32_t addr, uint32_t len)
+static int romapi_CacheInvalidRange(struct flash_bank *bank, uint32_t addr, uint32_t len)
 {
 	int retval;
 	struct working_area *algorithm;
@@ -258,10 +270,10 @@ static uint32_t romapi_CacheInvalidRange(struct flash_bank *bank, uint32_t addr,
 	init_reg_param(&reg_params[2], "sp", 32, PARAM_OUT);
 	buf_set_u32(reg_params[0].value, 0, 32, addr);
 	buf_set_u32(reg_params[1].value, 0, 32, len);
-	buf_set_u32(reg_params[2].value, 0, 32, algorithm->address + sysreq_wait_algorithm->size);
+	buf_set_u32(reg_params[2].value, 0, 32, algorithm->address + algorithm->size);
 
 	retval = target_run_algorithm(target, 0, NULL, dimof(reg_params), reg_params,
-									algorithm->address, algorithm->address + sizeof(aic8800_rom_api_call_code_t) - 6,
+									algorithm->address, algorithm->address + sizeof(struct aic8800_rom_api_call_code_t) - 6,
 									TIMEROUT_DEFAULT, &aic8800_bank->armv7m_info);
 	if (retval == ERROR_OK) {
 	}
@@ -271,7 +283,7 @@ static uint32_t romapi_CacheInvalidRange(struct flash_bank *bank, uint32_t addr,
 	destroy_reg_param(&reg_params[1]);
 	destroy_reg_param(&reg_params[2]);
 
-	return len;
+	return retval;
 }
 
 FLASH_BANK_COMMAND_HANDLER(aic8800_flash_bank_command)
@@ -294,12 +306,19 @@ static int aic8800_erase(struct flash_bank *bank, unsigned int first,
 {
 	int retval;
 	uint32_t addr_4k, len;
-	struct aic8800_flash_bank *aic8800_bank = bank->driver_priv;
 
 	if (bank->target->state != TARGET_HALTED) {
 		LOG_ERROR("Target not halted");
 		return ERROR_TARGET_NOT_HALTED;
 	}
+	
+	if ((last > (bank->size / AIC8800_FLASH_SECSIZE)) || (first > last)) {
+		LOG_ERROR("invalid first and last param");
+		return ERROR_FAIL;
+	}
+
+	addr_4k = AIC8800_FLASH_BASE + first * AIC8800_FLASH_SECSIZE;
+	len = AIC8800_FLASH_SECSIZE * (last - first + 1);
 
 	if (len == bank->size) {
 		retval = romapi_ChipErase(bank);
@@ -348,7 +367,7 @@ static int aic8800_write(struct flash_bank *bank, const uint8_t *buffer,
 
 static void init_rom_api_call_code(struct aic8800_rom_api_call_code_t *call_code, uint32_t api_addr)
 {
-	memcpy(call_code, aic8800_rom_api_call_code_example, sizeof(struct aic8800_rom_api_call_code_t));
+	memcpy(call_code, &aic8800_rom_api_call_code_example, sizeof(struct aic8800_rom_api_call_code_t));
 	call_code->api_addr = api_addr;
 }
 
@@ -356,6 +375,7 @@ static int aic8800_probe(struct flash_bank *bank)
 {
 	int retval;
 	uint32_t size;
+	struct target *target = bank->target;
 	struct aic8800_flash_bank *aic8800_bank = bank->driver_priv;
 	uint32_t rom_api_table[dimof(aic8800_bank->rom_api_call_code)];
 
@@ -378,14 +398,14 @@ static int aic8800_probe(struct flash_bank *bank)
 	bank->write_end_alignment = AIC8800_FLASH_PAGESIZE;
 	bank->sectors = malloc(sizeof(struct flash_sector) * bank->num_sectors);
 
-	for (i = 0; i < num_pages; i++) {
+	for (unsigned int i = 0; i < bank->num_sectors; i++) {
 		bank->sectors[i].offset = i * AIC8800_FLASH_SECSIZE;
 		bank->sectors[i].size = AIC8800_FLASH_SECSIZE;
 		bank->sectors[i].is_erased = -1;
 		bank->sectors[i].is_protected = 0;
 	}
 
-	for (int i = 0; i < dimof(aic8800_bank->rom_api_call_code); i++) {
+	for (unsigned int i = 0; i < dimof(aic8800_bank->rom_api_call_code); i++) {
 		struct aic8800_rom_api_call_code_t *call_code = &aic8800_bank->rom_api_call_code[i];
 		init_rom_api_call_code(call_code, rom_api_table[i]);
 	}
@@ -407,14 +427,14 @@ static int aic8800_auto_probe(struct flash_bank *bank)
 	return aic8800_probe(bank);
 }
 
-static int get_aic8800_info(struct flash_bank *bank, char *buf, int buf_size)
+static int get_aic8800_info(struct flash_bank *bank, struct command_invocation *cmd)
 {
 	int retval;
 	uint32_t size;
 	retval = romapi_ChipSizeGet(bank, &size);
 	if (retval != ERROR_OK)
 		return retval;
-	snprintf(buf, buf_size, "AIC8800 Flash Size = %" PRIu32 "kbytes", size / 1024);
+	command_print_sameline(cmd, "AIC8800 Flash Size = %" PRIu32 "kbytes", size / 1024);
 	return ERROR_OK;
 }
 
@@ -430,4 +450,3 @@ const struct flash_driver aic8800_flash = {
 	.info = get_aic8800_info,
 	.free_driver_priv = default_flash_free_driver_priv,
 };
-

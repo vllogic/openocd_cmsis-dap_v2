@@ -22,6 +22,7 @@
 
 extern const struct flash_driver aduc702x_flash;
 extern const struct flash_driver aducm360_flash;
+extern const struct flash_driver aic8800_flash;
 extern const struct flash_driver ambiqmicro_flash;
 extern const struct flash_driver at91sam3_flash;
 extern const struct flash_driver at91sam4_flash;
@@ -97,6 +98,7 @@ extern const struct flash_driver xmc4xxx_flash;
 static const struct flash_driver * const flash_drivers[] = {
 	&aduc702x_flash,
 	&aducm360_flash,
+	&aic8800_flash,
 	&ambiqmicro_flash,
 	&at91sam3_flash,
 	&at91sam4_flash,
