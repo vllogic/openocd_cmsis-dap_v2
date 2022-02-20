@@ -191,7 +191,7 @@ static uint32_t romapi_Erase(struct flash_bank *bank, uint32_t addr, uint32_t le
 	retval = target_run_algorithm(target, 0, NULL, dimof(reg_params), reg_params,
 									algorithm->address, CALL_CODE_BKPT_ADDR(algorithm->address),
 									TIMEROUT_ERASE_4K * (len / 4096), &aic8800_bank->armv7m_info);
-	if (retval == ERROR_OK) {
+	if (retval != ERROR_OK) {
 		LOG_ERROR("Error executing Erase algorithm");
 	}
 
@@ -306,7 +306,7 @@ static int romapi_CacheInvalidAll(struct flash_bank *bank)
 	retval = target_run_algorithm(target, 0, NULL, dimof(reg_params), reg_params,
 									algorithm->address, CALL_CODE_BKPT_ADDR(algorithm->address),
 									TIMEROUT_DEFAULT, &aic8800_bank->armv7m_info);
-	if (retval == ERROR_OK) {
+	if (retval != ERROR_OK) {
 		LOG_ERROR("Error executing CacheInvalidAll algorithm");
 	}
 
@@ -432,7 +432,7 @@ static int aic8800_write(struct flash_bank *bank, const uint8_t *buffer,
 	}
 
 	retval = romapi_Write(bank, bank->base + offset, count, buffer);
-	if (retval == ERROR_OK) {
+	if (retval != ERROR_OK) {
 		retval = romapi_CacheInvalidRange(bank, offset, count);
 	}
 
