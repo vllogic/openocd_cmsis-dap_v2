@@ -255,6 +255,8 @@ static int romapi_Write(struct flash_bank *bank, uint32_t addr, uint32_t len, co
 		buf_set_u32(reg_params[2].value, 0, 32, fifo->address);
 		buf_set_u32(reg_params[3].value, 0, 32, algorithm->address + algorithm->size);
 
+		retval = target_write_buffer(target, fifo->address, block, buf);
+
 		LOG_DEBUG("Running AIC8800 Write algorithm");
 		retval = target_run_algorithm(target, 0, NULL, dimof(reg_params), reg_params,
 										algorithm->address, CALL_CODE_BKPT_ADDR(algorithm->address),
@@ -266,6 +268,7 @@ static int romapi_Write(struct flash_bank *bank, uint32_t addr, uint32_t len, co
 
 		addr += block;
 		len -= block;
+		buf += block;
 	}
 
 	target_free_working_area(target, fifo);
@@ -433,7 +436,7 @@ static int aic8800_write(struct flash_bank *bank, const uint8_t *buffer,
 
 	retval = romapi_Write(bank, bank->base + offset, count, buffer);
 	if (retval == ERROR_OK) {
-		retval = romapi_CacheInvalidRange(bank, offset, count);
+		retval = romapi_CacheInvalidRange(bank, bank->base + offset, count);
 	}
 
 	return retval;
