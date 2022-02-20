@@ -432,7 +432,7 @@ static int aic8800_write(struct flash_bank *bank, const uint8_t *buffer,
 	}
 
 	retval = romapi_Write(bank, bank->base + offset, count, buffer);
-	if (retval != ERROR_OK) {
+	if (retval == ERROR_OK) {
 		retval = romapi_CacheInvalidRange(bank, offset, count);
 	}
 
