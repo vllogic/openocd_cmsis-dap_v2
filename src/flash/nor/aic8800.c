@@ -56,16 +56,19 @@
 struct aic8800_rom_api_call_code_t {
 	uint16_t ldrn_r3;	// 0x4b01
 	uint16_t blx_r3;	// 0x4798
-	uint16_t nop[2];	// 0xbf00, 0xbf00
+	uint16_t bkpt;	    // 0xbe00
+	uint16_t nop;	    // 0xbf00
 	uint32_t api_addr;	// api addr
 };
 
 struct aic8800_rom_api_call_code_t aic8800_rom_api_call_code_example = {
 	.ldrn_r3 = 0x4b01,			/* LDR.N R3, [PC, #0x4]*/
 	.blx_r3 = 0x4798,			/* BLX R3 */
-	.nop = {0xbf00, 0xbf00},	/* NOP & NOP */
+	.bkpt = 0xbe00,				/* bkpt */
+	.nop = 0xbf00,				/* NOP */
 	.api_addr = 0x12345678,
 };
+#define CALL_CODE_BKPT_ADDR(enter_addr)		((enter_addr) + 4)
 
 struct aic8800_flash_bank {
 	bool probed;
@@ -103,13 +106,13 @@ static int romapi_ChipSizeGet(struct flash_bank *bank, uint32_t *chip_size)
 	LOG_DEBUG("Sp 0x%08lX", algorithm->address + algorithm->size);
 	LOG_DEBUG("Rom Code ldrn_r3 0x%08X", (uint32_t)aic8800_bank->rom_api_call_code[2].ldrn_r3);
 	LOG_DEBUG("Rom Code blx_r3 0x%08X", (uint32_t)aic8800_bank->rom_api_call_code[2].blx_r3);
-	LOG_DEBUG("Rom Code nop[0] 0x%08X", (uint32_t)aic8800_bank->rom_api_call_code[2].nop[0]);
-	LOG_DEBUG("Rom Code nop[1] 0x%08X", (uint32_t)aic8800_bank->rom_api_call_code[2].nop[1]);
+	LOG_DEBUG("Rom Code bkpt 0x%08X", (uint32_t)aic8800_bank->rom_api_call_code[2].bkpt);
+	LOG_DEBUG("Rom Code nop 0x%08X", (uint32_t)aic8800_bank->rom_api_call_code[2].nop);
 	LOG_DEBUG("Rom Code api_addr 0x%08X", aic8800_bank->rom_api_call_code[2].api_addr);
 
 	LOG_DEBUG("Running AIC8800 ChipSizeGet algorithm");
 	retval = target_run_algorithm(target, 0, NULL, dimof(reg_params), reg_params,
-									algorithm->address, algorithm->address + sizeof(struct aic8800_rom_api_call_code_t) - 6,
+									algorithm->address, CALL_CODE_BKPT_ADDR(algorithm->address),
 									TIMEROUT_DEFAULT, &aic8800_bank->armv7m_info);
 	if (retval != ERROR_OK) {
 		LOG_ERROR("Error executing ChipSizeGet algorithm");
@@ -151,7 +154,7 @@ static int romapi_ChipErase(struct flash_bank *bank)
 
 	LOG_DEBUG("Running AIC8800 ChipErase algorithm");
 	retval = target_run_algorithm(target, 0, NULL, dimof(reg_params), reg_params,
-									algorithm->address, algorithm->address + sizeof(struct aic8800_rom_api_call_code_t) - 6,
+									algorithm->address, CALL_CODE_BKPT_ADDR(algorithm->address),
 									timeout, &aic8800_bank->armv7m_info);
 	if (retval != ERROR_OK) {
 		LOG_ERROR("Error executing ChipErase algorithm");
@@ -193,7 +196,7 @@ static uint32_t romapi_Erase(struct flash_bank *bank, uint32_t addr, uint32_t le
 
 	LOG_DEBUG("Running AIC8800 Erase algorithm");
 	retval = target_run_algorithm(target, 0, NULL, dimof(reg_params), reg_params,
-									algorithm->address, algorithm->address + sizeof(struct aic8800_rom_api_call_code_t) - 6,
+									algorithm->address, CALL_CODE_BKPT_ADDR(algorithm->address),
 									TIMEROUT_ERASE_4K * (len / 4096), &aic8800_bank->armv7m_info);
 	if (retval == ERROR_OK) {
 		LOG_ERROR("Error executing Erase algorithm");
@@ -261,7 +264,7 @@ static int romapi_Write(struct flash_bank *bank, uint32_t addr, uint32_t len, co
 
 		LOG_DEBUG("Running AIC8800 Write algorithm");
 		retval = target_run_algorithm(target, 0, NULL, dimof(reg_params), reg_params,
-										algorithm->address, algorithm->address + sizeof(struct aic8800_rom_api_call_code_t) - 6,
+										algorithm->address, CALL_CODE_BKPT_ADDR(algorithm->address),
 										TIMEROUT_WRITE_4K, &aic8800_bank->armv7m_info);
 		if (retval != ERROR_OK) {
 			LOG_ERROR("Error executing Write algorithm");
@@ -308,7 +311,7 @@ static int romapi_CacheInvalidAll(struct flash_bank *bank)
 
 	LOG_DEBUG("Running AIC8800 CacheInvalidAll algorithm");
 	retval = target_run_algorithm(target, 0, NULL, dimof(reg_params), reg_params,
-									algorithm->address, algorithm->address + sizeof(struct aic8800_rom_api_call_code_t) - 6,
+									algorithm->address, CALL_CODE_BKPT_ADDR(algorithm->address),
 									TIMEROUT_DEFAULT, &aic8800_bank->armv7m_info);
 	if (retval == ERROR_OK) {
 		LOG_ERROR("Error executing CacheInvalidAll algorithm");
@@ -350,7 +353,7 @@ static int romapi_CacheInvalidRange(struct flash_bank *bank, uint32_t addr, uint
 
 	LOG_DEBUG("Running AIC8800 CacheInvalidRange algorithm");
 	retval = target_run_algorithm(target, 0, NULL, dimof(reg_params), reg_params,
-									algorithm->address, algorithm->address + sizeof(struct aic8800_rom_api_call_code_t) - 6,
+									algorithm->address, CALL_CODE_BKPT_ADDR(algorithm->address),
 									TIMEROUT_DEFAULT, &aic8800_bank->armv7m_info);
 	if (retval != ERROR_OK) {
 		LOG_ERROR("Error executing CacheInvalidRange algorithm");
