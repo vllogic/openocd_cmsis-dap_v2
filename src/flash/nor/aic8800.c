@@ -451,6 +451,9 @@ static int aic8800_probe(struct flash_bank *bank)
 	uint32_t rom_api_table[dimof(aic8800_bank->rom_api_call_code)];
 
 	aic8800_bank->probed = false;
+	
+	aic8800_bank->armv7m_info.common_magic = ARMV7M_COMMON_MAGIC;
+	aic8800_bank->armv7m_info.core_mode = ARM_MODE_THREAD;
 
 	retval = target_read_buffer(target, AIC8800_ROM_APITBL_BASE, sizeof(rom_api_table), (uint8_t *)rom_api_table);
 	if (retval != ERROR_OK)
@@ -478,9 +481,6 @@ static int aic8800_probe(struct flash_bank *bank)
 	for (unsigned int i = 0; i < dimof(aic8800_bank->rom_api_call_code); i++) {
 		init_rom_api_call_code(&aic8800_bank->rom_api_call_code[i], rom_api_table[i]);
 	}
-	
-	aic8800_bank->armv7m_info.common_magic = ARMV7M_COMMON_MAGIC;
-	aic8800_bank->armv7m_info.core_mode = ARM_MODE_THREAD;
 
 	aic8800_bank->probed = true;
 
