@@ -200,7 +200,7 @@ static uint32_t romapi_Erase(struct flash_bank *bank, uint32_t addr, uint32_t le
 	destroy_reg_param(&reg_params[1]);
 	destroy_reg_param(&reg_params[2]);
 
-	return len;
+	return retval;
 }
 
 static int romapi_Write(struct flash_bank *bank, uint32_t addr, uint32_t len, const uint8_t *buf)
