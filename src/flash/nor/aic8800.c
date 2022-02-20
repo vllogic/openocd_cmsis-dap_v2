@@ -459,6 +459,10 @@ static int aic8800_probe(struct flash_bank *bank)
 	if (retval != ERROR_OK)
 		return retval;
 
+	for (unsigned int i = 0; i < dimof(aic8800_bank->rom_api_call_code); i++) {
+		init_rom_api_call_code(&aic8800_bank->rom_api_call_code[i], rom_api_table[i]);
+	}
+
 	retval = romapi_ChipSizeGet(bank, &size);
 	if (retval != ERROR_OK)
 		return retval;
@@ -478,9 +482,6 @@ static int aic8800_probe(struct flash_bank *bank)
 		bank->sectors[i].is_protected = 0;
 	}
 
-	for (unsigned int i = 0; i < dimof(aic8800_bank->rom_api_call_code); i++) {
-		init_rom_api_call_code(&aic8800_bank->rom_api_call_code[i], rom_api_table[i]);
-	}
 
 	aic8800_bank->probed = true;
 
