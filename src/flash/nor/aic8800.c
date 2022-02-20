@@ -100,6 +100,13 @@ static int romapi_ChipSizeGet(struct flash_bank *bank, uint32_t *chip_size)
 	//buf_set_u32(reg_params[0].value, 0, 32, 0);
 	buf_set_u32(reg_params[1].value, 0, 32, algorithm->address + algorithm->size);
 
+	LOG_DEBUG("Sp 0x%08lX", algorithm->address + algorithm->size);
+	LOG_DEBUG("Rom Code ldrn_r3 0x%08X", (uint32_t)aic8800_bank->rom_api_call_code[2].ldrn_r3);
+	LOG_DEBUG("Rom Code blx_r3 0x%08X", (uint32_t)aic8800_bank->rom_api_call_code[2].blx_r3);
+	LOG_DEBUG("Rom Code nop[0] 0x%08X", (uint32_t)aic8800_bank->rom_api_call_code[2].nop[0]);
+	LOG_DEBUG("Rom Code nop[1] 0x%08X", (uint32_t)aic8800_bank->rom_api_call_code[2].nop[1]);
+	LOG_DEBUG("Rom Code api_addr 0x%08X", aic8800_bank->rom_api_call_code[2].api_addr);
+
 	LOG_DEBUG("Running AIC8800 ChipSizeGet algorithm");
 	retval = target_run_algorithm(target, 0, NULL, dimof(reg_params), reg_params,
 									algorithm->address, algorithm->address + sizeof(struct aic8800_rom_api_call_code_t) - 6,
