@@ -256,6 +256,9 @@ static int romapi_Write(struct flash_bank *bank, uint32_t addr, uint32_t len, co
 		buf_set_u32(reg_params[3].value, 0, 32, algorithm->address + algorithm->size);
 
 		retval = target_write_buffer(target, fifo->address, block, buf);
+		if (retval != ERROR_OK) {
+			return retval;
+		}
 
 		LOG_DEBUG("Running AIC8800 Write algorithm");
 		retval = target_run_algorithm(target, 0, NULL, dimof(reg_params), reg_params,
