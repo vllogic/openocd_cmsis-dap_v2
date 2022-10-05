@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 /***************************************************************************
  *   Copyright (C) 2005 by Dominic Rath                                    *
  *   Dominic.Rath@gmx.de                                                   *
@@ -16,19 +18,6 @@
  *                                                                         *
  *   Copyright (C) 2021 Doug Brunner                                       *
  *   doug.a.brunner@gmail.com                                              *
- *                                                                         *
- *   This program is free software; you can redistribute it and/or modify  *
- *   it under the terms of the GNU General Public License as published by  *
- *   the Free Software Foundation; either version 2 of the License, or     *
- *   (at your option) any later version.                                   *
- *                                                                         *
- *   This program is distributed in the hope that it will be useful,       *
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of        *
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the         *
- *   GNU General Public License for more details.                          *
- *                                                                         *
- *   You should have received a copy of the GNU General Public License     *
- *   along with this program.  If not, see <http://www.gnu.org/licenses/>. *
  ***************************************************************************/
 
 #ifdef HAVE_CONFIG_H
@@ -257,23 +246,19 @@ static int efm32x_write_reg_u32(struct flash_bank *bank, target_addr_t offset,
 static int efm32x_read_info(struct flash_bank *bank)
 {
 	int ret;
-	uint32_t cpuid = 0;
 	struct efm32x_flash_chip *efm32x_info = bank->driver_priv;
 	struct efm32_info *efm32_info = &(efm32x_info->info);
 
 	memset(efm32_info, 0, sizeof(struct efm32_info));
 
-	ret = target_read_u32(bank->target, CPUID, &cpuid);
-	if (ret != ERROR_OK)
-		return ret;
+	const struct cortex_m_common *cortex_m = target_to_cm(bank->target);
 
-	if (((cpuid >> 4) & 0xfff) == 0xc23) {
-		/* Cortex-M3 device */
-	} else if (((cpuid >> 4) & 0xfff) == 0xc24) {
-		/* Cortex-M4 device (WONDER GECKO) */
-	} else if (((cpuid >> 4) & 0xfff) == 0xc60) {
-		/* Cortex-M0+ device */
-	} else {
+	switch (cortex_m->core_info->partno) {
+	case CORTEX_M3_PARTNO:
+	case CORTEX_M4_PARTNO:
+	case CORTEX_M0P_PARTNO:
+		break;
+	default:
 		LOG_ERROR("Target is not Cortex-Mx Device");
 		return ERROR_FAIL;
 	}
@@ -1090,8 +1075,8 @@ static int efm32x_probe(struct flash_bank *bank)
 
 	LOG_INFO("detected part: %s Gecko, rev %d",
 			efm32_mcu_info->family_data->name, efm32_mcu_info->prod_rev);
-	LOG_INFO("flash size = %dkbytes", efm32_mcu_info->flash_sz_kib);
-	LOG_INFO("flash page size = %dbytes", efm32_mcu_info->page_size);
+	LOG_INFO("flash size = %d KiB", efm32_mcu_info->flash_sz_kib);
+	LOG_INFO("flash page size = %d B", efm32_mcu_info->page_size);
 
 	assert(efm32_mcu_info->page_size != 0);
 

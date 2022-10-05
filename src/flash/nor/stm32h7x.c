@@ -1,18 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 /***************************************************************************
  *   Copyright (C) 2017 by STMicroelectronics                              *
- *                                                                         *
- *   This program is free software; you can redistribute it and/or modify  *
- *   it under the terms of the GNU General Public License as published by  *
- *   the Free Software Foundation; either version 2 of the License, or     *
- *   (at your option) any later version.                                   *
- *                                                                         *
- *   This program is distributed in the hope that it will be useful,       *
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of        *
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the         *
- *   GNU General Public License for more details.                          *
- *                                                                         *
- *   You should have received a copy of the GNU General Public License     *
- *   along with this program.  If not, see <http://www.gnu.org/licenses/>. *
  ***************************************************************************/
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -531,6 +520,7 @@ static int stm32x_protect(struct flash_bank *bank, int set, unsigned int first,
 		unsigned int last)
 {
 	struct target *target = bank->target;
+	struct stm32h7x_flash_bank *stm32x_info = bank->driver_priv;
 	uint32_t protection;
 
 	if (target->state != TARGET_HALTED) {
@@ -553,7 +543,7 @@ static int stm32x_protect(struct flash_bank *bank, int set, unsigned int first,
 	}
 
 	/* apply WRPSN mask */
-	protection &= 0xff;
+	protection &= stm32x_info->part_info->wps_mask;
 
 	LOG_DEBUG("stm32x_protect, option_bytes written WPSN 0x%" PRIx32, protection);
 
@@ -759,13 +749,17 @@ static int stm32x_read_id_code(struct flash_bank *bank, uint32_t *id)
 static int stm32x_probe(struct flash_bank *bank)
 {
 	struct target *target = bank->target;
-	struct cortex_m_common *cortex_m = target_to_cm(target);
 	struct stm32h7x_flash_bank *stm32x_info = bank->driver_priv;
 	uint16_t flash_size_in_kb;
 	uint32_t device_id;
 
 	stm32x_info->probed = false;
 	stm32x_info->part_info = NULL;
+
+	if (!target_was_examined(target)) {
+		LOG_ERROR("Target not examined yet");
+		return ERROR_TARGET_NOT_EXAMINED;
+	}
 
 	int retval = stm32x_read_id_code(bank, &stm32x_info->idcode);
 	if (retval != ERROR_OK)
@@ -800,7 +794,8 @@ static int stm32x_probe(struct flash_bank *bank)
 	/* get flash size from target */
 	/* STM32H74x/H75x, the second core (Cortex-M4) cannot read the flash size */
 	retval = ERROR_FAIL;
-	if (device_id == DEVID_STM32H74_H75XX && cortex_m->core_info->partno == CORTEX_M4_PARTNO)
+	if (device_id == DEVID_STM32H74_H75XX
+			&& cortex_m_get_partno_safe(target) == CORTEX_M4_PARTNO)
 		LOG_WARNING("%s cannot read the flash size register", target_name(target));
 	else
 		retval = target_read_u16(target, stm32x_info->part_info->fsize_addr, &flash_size_in_kb);

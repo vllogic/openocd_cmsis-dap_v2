@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+
 # Defines basic Tcl procs for OpenOCD target module
 
 proc new_target_name { } {
@@ -204,6 +206,32 @@ proc init_target_events {} {
 
 # Additionally board config scripts can define a procedure init_board that will be executed after init and init_targets
 proc init_board {} {
+}
+
+proc mem2array {arrayname bitwidth address count {phys ""}} {
+	echo "DEPRECATED! use 'read_memory' not 'mem2array'"
+
+	upvar $arrayname $arrayname
+	set $arrayname ""
+	set i 0
+
+	foreach elem [read_memory $address $bitwidth $count {*}$phys] {
+		set ${arrayname}($i) $elem
+		incr i
+	}
+}
+
+proc array2mem {arrayname bitwidth address count {phys ""}} {
+	echo "DEPRECATED! use 'write_memory' not 'array2mem'"
+
+	upvar $arrayname $arrayname
+	set data ""
+
+	for {set i 0} {$i < $count} {incr i} {
+		lappend data [expr $${arrayname}($i)]
+	}
+
+	write_memory $address $bitwidth $data {*}$phys
 }
 
 # smp_on/smp_off were already DEPRECATED in v0.11.0 through http://openocd.zylin.com/4615
