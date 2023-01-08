@@ -398,8 +398,10 @@ static int cmsis_dap_usb_read(struct cmsis_dap *dap, int timeout_ms)
 	int transferred = 0;
 	int err;
 
+	//err = libusb_bulk_transfer(dap->bdata->dev_handle, dap->bdata->ep_in,
+	//						dap->packet_buffer, dap->packet_size, &transferred, timeout_ms);
 	err = libusb_bulk_transfer(dap->bdata->dev_handle, dap->bdata->ep_in,
-							dap->packet_buffer, dap->packet_size, &transferred, timeout_ms);
+							dap->packet_buffer, dap->packet_buffer_size, &transferred, timeout_ms);
 	if (err) {
 		if (err == LIBUSB_ERROR_TIMEOUT) {
 			return ERROR_TIMEOUT_REACHED;
@@ -418,10 +420,15 @@ static int cmsis_dap_usb_write(struct cmsis_dap *dap, int txlen, int timeout_ms)
 {
 	int transferred = 0;
 	int err;
+	int tail = 0;
+
+	if ((txlen < dap->packet_buffer_size) && !(txlen % dap->packet_size)) {
+		tail = 1;
+	}
 
 	/* skip the first byte that is only used by the HID backend */
 	err = libusb_bulk_transfer(dap->bdata->dev_handle, dap->bdata->ep_out,
-							dap->packet_buffer, txlen, &transferred, timeout_ms);
+							dap->packet_buffer, txlen + tail, &transferred, timeout_ms);
 	if (err) {
 		if (err == LIBUSB_ERROR_TIMEOUT) {
 			return ERROR_TIMEOUT_REACHED;
@@ -431,7 +438,7 @@ static int cmsis_dap_usb_write(struct cmsis_dap *dap, int txlen, int timeout_ms)
 		}
 	}
 
-	return transferred;
+	return transferred - tail;
 }
 
 static int cmsis_dap_usb_alloc(struct cmsis_dap *dap, unsigned int pkt_sz)
@@ -443,7 +450,7 @@ static int cmsis_dap_usb_alloc(struct cmsis_dap *dap, unsigned int pkt_sz)
 	}
 
 	dap->packet_buffer = buf;
-	dap->packet_size = pkt_sz;
+	//dap->packet_size = pkt_sz;
 	dap->packet_buffer_size = pkt_sz;
 
 	dap->command = dap->packet_buffer;
