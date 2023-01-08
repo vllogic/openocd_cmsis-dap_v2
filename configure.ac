@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 AC_PREREQ([2.69])
-AC_INIT([openocd], [0.12.0-rc1+dev],
+AC_INIT([openocd], [0.12.0-rc3+dev],
   [OpenOCD Mailing List <openocd-devel@lists.sourceforge.net>])
 AC_CONFIG_SRCDIR([src/openocd.c])
 AC_CONFIG_AUX_DIR([build-aux])
@@ -631,12 +631,15 @@ AS_IF([test "x$enable_capstone" != xno], [
 	PKG_CHECK_MODULES([CAPSTONE], [capstone], [
 		AC_DEFINE([HAVE_CAPSTONE], [1], [1 if you have Capstone disassembly framework.])
 	], [
-		AC_DEFINE([HAVE_CAPSTONE], [0], [0 if you don't have Capstone disassembly framework.])
 		if test "x$enable_capstone" != xauto; then
 			AC_MSG_ERROR([--with-capstone was given, but test for Capstone failed])
 		fi
 		enable_capstone=no
 	])
+])
+
+AS_IF([test "x$enable_capstone" == xno], [
+	AC_DEFINE([HAVE_CAPSTONE], [0], [0 if you don't have Capstone disassembly framework.])
 ])
 
 for hidapi_lib in hidapi hidapi-hidraw hidapi-libusb; do

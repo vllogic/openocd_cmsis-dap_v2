@@ -879,16 +879,6 @@ static int cortex_m_poll(struct target *target)
 	struct cortex_m_common *cortex_m = target_to_cm(target);
 	struct armv7m_common *armv7m = &cortex_m->armv7m;
 
-	/* Check if debug_ap is available to prevent segmentation fault.
-	 * If the re-examination after an error does not find a MEM-AP
-	 * (e.g. the target stopped communicating), debug_ap pointer
-	 * can suddenly become NULL.
-	 */
-	if (!armv7m->debug_ap) {
-		target->state = TARGET_UNKNOWN;
-		return ERROR_TARGET_NOT_EXAMINED;
-	}
-
 	/* Read from Debug Halting Control and Status Register */
 	retval = cortex_m_read_dhcsr_atomic_sticky(target);
 	if (retval != ERROR_OK) {
@@ -1408,8 +1398,9 @@ static int cortex_m_assert_reset(struct target *target)
 	struct armv7m_common *armv7m = &cortex_m->armv7m;
 	enum cortex_m_soft_reset_config reset_config = cortex_m->soft_reset_config;
 
-	LOG_TARGET_DEBUG(target, "target->state: %s",
-		target_state_name(target));
+	LOG_TARGET_DEBUG(target, "target->state: %s,%s examined",
+		target_state_name(target),
+		target_was_examined(target) ? "" : " not");
 
 	enum reset_types jtag_reset_config = jtag_get_reset_config();
 
@@ -1428,22 +1419,38 @@ static int cortex_m_assert_reset(struct target *target)
 
 	bool srst_asserted = false;
 
-	if (!target_was_examined(target)) {
-		if (jtag_reset_config & RESET_HAS_SRST) {
-			adapter_assert_reset();
-			if (target->reset_halt)
-				LOG_TARGET_ERROR(target, "Target not examined, will not halt after reset!");
-			return ERROR_OK;
-		} else {
-			LOG_TARGET_ERROR(target, "Target not examined, reset NOT asserted!");
-			return ERROR_FAIL;
-		}
-	}
-
 	if ((jtag_reset_config & RESET_HAS_SRST) &&
-	    (jtag_reset_config & RESET_SRST_NO_GATING)) {
+		((jtag_reset_config & RESET_SRST_NO_GATING) || !armv7m->debug_ap)) {
+		/* If we have no debug_ap, asserting SRST is the only thing
+		 * we can do now */
 		adapter_assert_reset();
 		srst_asserted = true;
+	}
+
+	/* TODO: replace the hack calling target_examine_one()
+	 * as soon as a better reset framework is available */
+	if (!target_was_examined(target) && !target->defer_examine
+		&& srst_asserted && (jtag_reset_config & RESET_SRST_NO_GATING)) {
+		LOG_TARGET_DEBUG(target, "Trying to re-examine under reset");
+		target_examine_one(target);
+	}
+
+	/* We need at least debug_ap to go further.
+	 * Inform user and bail out if we don't have one. */
+	if (!armv7m->debug_ap) {
+		if (srst_asserted) {
+			if (target->reset_halt)
+				LOG_TARGET_ERROR(target, "Debug AP not available, will not halt after reset!");
+
+			/* Do not propagate error: reset was asserted, proceed to deassert! */
+			target->state = TARGET_RESET;
+			register_cache_invalidate(cortex_m->armv7m.arm.core_cache);
+			return ERROR_OK;
+
+		} else {
+			LOG_TARGET_ERROR(target, "Debug AP not available, reset NOT asserted!");
+			return ERROR_FAIL;
+		}
 	}
 
 	/* Enable debug requests */
@@ -1546,7 +1553,7 @@ static int cortex_m_assert_reset(struct target *target)
 	if (retval != ERROR_OK)
 		return retval;
 
-	if (target->reset_halt) {
+	if (target->reset_halt && target_was_examined(target)) {
 		retval = target_halt(target);
 		if (retval != ERROR_OK)
 			return retval;
@@ -1559,8 +1566,9 @@ static int cortex_m_deassert_reset(struct target *target)
 {
 	struct armv7m_common *armv7m = &target_to_cm(target)->armv7m;
 
-	LOG_TARGET_DEBUG(target, "target->state: %s",
-		target_state_name(target));
+	LOG_TARGET_DEBUG(target, "target->state: %s,%s examined",
+		target_state_name(target),
+		target_was_examined(target) ? "" : " not");
 
 	/* deassert reset lines */
 	adapter_deassert_reset();
@@ -1568,8 +1576,8 @@ static int cortex_m_deassert_reset(struct target *target)
 	enum reset_types jtag_reset_config = jtag_get_reset_config();
 
 	if ((jtag_reset_config & RESET_HAS_SRST) &&
-	    !(jtag_reset_config & RESET_SRST_NO_GATING) &&
-		target_was_examined(target)) {
+		!(jtag_reset_config & RESET_SRST_NO_GATING) &&
+		armv7m->debug_ap) {
 
 		int retval = dap_dp_init_or_reconnect(armv7m->debug_ap->dap);
 		if (retval != ERROR_OK) {
@@ -2262,6 +2270,22 @@ static void cortex_m_dwt_free(struct target *target)
 	cm->dwt_cache = NULL;
 }
 
+static bool cortex_m_has_tz(struct target *target)
+{
+	struct armv7m_common *armv7m = target_to_armv7m(target);
+	uint32_t dauthstatus;
+
+	if (armv7m->arm.arch != ARM_ARCH_V8M)
+		return false;
+
+	int retval = target_read_u32(target, DAUTHSTATUS, &dauthstatus);
+	if (retval != ERROR_OK) {
+		LOG_WARNING("Error reading DAUTHSTATUS register");
+		return false;
+	}
+	return (dauthstatus & DAUTHSTATUS_SID_MASK) != 0;
+}
+
 #define MVFR0 0xe000ef40
 #define MVFR1 0xe000ef44
 
@@ -2293,23 +2317,20 @@ int cortex_m_examine(struct target *target)
 	/* hla_target shares the examine handler but does not support
 	 * all its calls */
 	if (!armv7m->is_hla_target) {
-		if (armv7m->debug_ap) {
-			dap_put_ap(armv7m->debug_ap);
-			armv7m->debug_ap = NULL;
-		}
-
-		if (cortex_m->apsel == DP_APSEL_INVALID) {
-			/* Search for the MEM-AP */
-			retval = cortex_m_find_mem_ap(swjdp, &armv7m->debug_ap);
-			if (retval != ERROR_OK) {
-				LOG_TARGET_ERROR(target, "Could not find MEM-AP to control the core");
-				return retval;
-			}
-		} else {
-			armv7m->debug_ap = dap_get_ap(swjdp, cortex_m->apsel);
-			if (!armv7m->debug_ap) {
-				LOG_ERROR("Cannot get AP");
-				return ERROR_FAIL;
+		if (!armv7m->debug_ap) {
+			if (cortex_m->apsel == DP_APSEL_INVALID) {
+				/* Search for the MEM-AP */
+				retval = cortex_m_find_mem_ap(swjdp, &armv7m->debug_ap);
+				if (retval != ERROR_OK) {
+					LOG_TARGET_ERROR(target, "Could not find MEM-AP to control the core");
+					return retval;
+				}
+			} else {
+				armv7m->debug_ap = dap_get_ap(swjdp, cortex_m->apsel);
+				if (!armv7m->debug_ap) {
+					LOG_ERROR("Cannot get AP");
+					return ERROR_FAIL;
+				}
 			}
 		}
 
@@ -2393,7 +2414,7 @@ int cortex_m_examine(struct target *target)
 			for (size_t idx = ARMV7M_FPU_FIRST_REG; idx <= ARMV7M_FPU_LAST_REG; idx++)
 				armv7m->arm.core_cache->reg_list[idx].exist = false;
 
-		if (armv7m->arm.arch != ARM_ARCH_V8M)
+		if (!cortex_m_has_tz(target))
 			for (size_t idx = ARMV8M_FIRST_REG; idx <= ARMV8M_LAST_REG; idx++)
 				armv7m->arm.core_cache->reg_list[idx].exist = false;
 
