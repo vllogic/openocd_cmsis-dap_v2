@@ -12,6 +12,7 @@ NOR_DRIVERS = \
 	%D%/aduc702x.c \
 	%D%/aducm360.c \
 	%D%/aic8800x.c \
+	%D%/aic8800mc.c \
 	%D%/ambiqmicro.c \
 	%D%/at91sam4.c \
 	%D%/at91sam4l.c \
