@@ -865,12 +865,6 @@ proc ft232r_restore_serial args {
 	eval ft232r restore_serial $args
 }
 
-lappend _telnet_autocomplete_skip "aice serial"
-proc "aice serial" {args} {
-	echo "DEPRECATED! use 'adapter serial' not 'aice serial'"
-	eval adapter serial $args
-}
-
 lappend _telnet_autocomplete_skip cmsis_dap_serial
 proc cmsis_dap_serial args {
 	echo "DEPRECATED! use 'adapter serial' not 'cmsis_dap_serial'"
@@ -1111,6 +1105,20 @@ proc "am335xgpio led_on_state" {state} {
 			{eval adapter gpio led -active-low}
 		default
 			{return -code 1 -level 1 "am335xgpio led_on_state: syntax error"}
+	}
+}
+
+lappend _telnet_autocomplete_skip "pld device"
+proc "pld device" {driver tap_name {opt 0}} {
+	echo "DEPRECATED! use 'pld create ...', not 'pld device ...'"
+	if {[string is integer -strict $opt]} {
+		if {$opt == 0} {
+			eval pld create [lindex [split $tap_name .] 0].pld $driver -chain-position $tap_name
+		} else {
+			eval pld create [lindex [split $tap_name .] 0].pld $driver -chain-position $tap_name -no_jstart
+		}
+	} else {
+		eval pld create [lindex [split $tap_name .] 0].pld $driver -chain-position $tap_name -family $opt
 	}
 }
 

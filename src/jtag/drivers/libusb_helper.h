@@ -30,13 +30,16 @@
 typedef char * (*adapter_get_alternate_serial_fn)(struct libusb_device_handle *device,
 		struct libusb_device_descriptor *dev_desc);
 
+bool jtag_libusb_match_ids(struct libusb_device_descriptor *dev_desc,
+		const uint16_t vids[], const uint16_t pids[]);
 int jtag_libusb_open(const uint16_t vids[], const uint16_t pids[],
 		struct libusb_device_handle **out,
 		adapter_get_alternate_serial_fn adapter_get_alternate_serial);
 void jtag_libusb_close(struct libusb_device_handle *dev);
 int jtag_libusb_control_transfer(struct libusb_device_handle *dev,
 		uint8_t request_type, uint8_t request, uint16_t value,
-		uint16_t index, char *bytes, uint16_t size, unsigned int timeout);
+		uint16_t index, char *bytes, uint16_t size, unsigned int timeout,
+		int *transferred);
 int jtag_libusb_bulk_write(struct libusb_device_handle *dev, int ep,
 		char *bytes, int size, int timeout, int *transferred);
 int jtag_libusb_bulk_read(struct libusb_device_handle *dev, int ep,

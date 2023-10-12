@@ -918,7 +918,7 @@ static int dpm_watchpoint_setup(struct arm_dpm *dpm, unsigned index_t,
 	uint32_t control;
 
 	/* this hardware doesn't support data value matching or masking */
-	if (wp->value || wp->mask != ~(uint32_t)0) {
+	if (wp->mask != WATCHPOINT_IGNORE_DATA_VALUE_MASK) {
 		LOG_DEBUG("watchpoint values and masking not supported");
 		return ERROR_TARGET_RESOURCE_NOT_AVAILABLE;
 	}
@@ -1050,7 +1050,7 @@ int arm_dpm_setup(struct arm_dpm *dpm)
 {
 	struct arm *arm = dpm->arm;
 	struct target *target = arm->target;
-	struct reg_cache *cache = 0;
+	struct reg_cache *cache = NULL;
 
 	arm->dpm = dpm;
 

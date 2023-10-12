@@ -18,10 +18,6 @@
 #include "interfaces.h"
 #include <transport/transport.h>
 
-#ifdef HAVE_STRINGS_H
-#include <strings.h>
-#endif
-
 /**
  * @file
  * Holds support for configuring debug adapters from TCl scripts.
@@ -136,9 +132,11 @@ int adapter_init(struct command_context *cmd_ctx)
 
 	int retval;
 
-	if (adapter_config.clock_mode == CLOCK_MODE_UNSELECTED) {
+	/* If the adapter supports configurable speed but the speed is not configured,
+	 * provide a hint to the user. */
+	if (adapter_driver->speed && adapter_config.clock_mode == CLOCK_MODE_UNSELECTED) {
 		LOG_WARNING("An adapter speed is not selected in the init scripts."
-			" OpenOCD will try to run the adapter at the low speed (%d kHz)",
+			" OpenOCD will try to run the adapter at very low speed (%d kHz).",
 			DEFAULT_CLOCK_SPEED_KHZ);
 		LOG_WARNING("To remove this warnings and achieve reasonable communication speed with the target,"
 		    " set \"adapter speed\" or \"jtag_rclk\" in the init scripts.");
@@ -153,7 +151,7 @@ int adapter_init(struct command_context *cmd_ctx)
 	adapter_config.adapter_initialized = true;
 
 	if (!adapter_driver->speed) {
-		LOG_INFO("This adapter doesn't support configurable speed");
+		LOG_INFO("Note: The adapter \"%s\" doesn't support configurable speed", adapter_driver->name);
 		return ERROR_OK;
 	}
 
@@ -376,21 +374,18 @@ done:
 	return equal;
 }
 
-static int jim_adapter_name(Jim_Interp *interp, int argc, Jim_Obj * const *argv)
+COMMAND_HANDLER(handle_adapter_name)
 {
-	struct jim_getopt_info goi;
-	jim_getopt_setup(&goi, interp, argc-1, argv + 1);
-
 	/* return the name of the interface */
 	/* TCL code might need to know the exact type... */
 	/* FUTURE: we allow this as a means to "set" the interface. */
-	if (goi.argc != 0) {
-		Jim_WrongNumArgs(goi.interp, 1, goi.argv-1, "(no params)");
-		return JIM_ERR;
-	}
-	const char *name = adapter_driver ? adapter_driver->name : NULL;
-	Jim_SetResultString(goi.interp, name ? name : "undefined", -1);
-	return JIM_OK;
+
+	if (CMD_ARGC != 0)
+		return ERROR_COMMAND_SYNTAX_ERROR;
+
+	command_print(CMD, "%s", adapter_driver ? adapter_driver->name : "undefined");
+
+	return ERROR_OK;
 }
 
 COMMAND_HANDLER(adapter_transports_command)
@@ -1125,9 +1120,10 @@ static const struct command_registration adapter_command_handlers[] = {
 	{
 		.name = "name",
 		.mode = COMMAND_ANY,
-		.jim_handler = jim_adapter_name,
+		.handler = handle_adapter_name,
 		.help = "Returns the name of the currently "
 			"selected adapter (driver)",
+		.usage = "",
 	},
 	{
 		.name = "srst",

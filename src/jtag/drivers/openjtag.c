@@ -239,10 +239,10 @@ static int openjtag_buf_write_cy7c65215(
 
 	ret = jtag_libusb_control_transfer(usbh, CY7C65215_JTAG_REQUEST,
 									   CY7C65215_JTAG_WRITE, size, 0,
-									   NULL, 0, CY7C65215_USB_TIMEOUT);
-	if (ret < 0) {
-		LOG_ERROR("vendor command failed, error %d", ret);
-		return ERROR_JTAG_DEVICE_ERROR;
+									   NULL, 0, CY7C65215_USB_TIMEOUT, NULL);
+	if (ret != ERROR_OK) {
+		LOG_ERROR("vendor command failed");
+		return ret;
 	}
 
 	if (jtag_libusb_bulk_write(usbh, ep_out, (char *)buf, size,
@@ -306,10 +306,10 @@ static int openjtag_buf_read_cy7c65215(
 
 	ret = jtag_libusb_control_transfer(usbh, CY7C65215_JTAG_REQUEST,
 									   CY7C65215_JTAG_READ, qty, 0,
-									   NULL, 0, CY7C65215_USB_TIMEOUT);
-	if (ret < 0) {
-		LOG_ERROR("vendor command failed, error %d", ret);
-		return ERROR_JTAG_DEVICE_ERROR;
+									   NULL, 0, CY7C65215_USB_TIMEOUT, NULL);
+	if (ret != ERROR_OK) {
+		LOG_ERROR("vendor command failed");
+		return ret;
 	}
 
 	if (jtag_libusb_bulk_read(usbh, ep_in, (char *)buf, qty,
@@ -455,8 +455,8 @@ static int openjtag_init_cy7c65215(void)
 	ret = jtag_libusb_control_transfer(usbh,
 									   CY7C65215_JTAG_REQUEST,
 									   CY7C65215_JTAG_ENABLE,
-									   0, 0, NULL, 0, CY7C65215_USB_TIMEOUT);
-	if (ret < 0) {
+									   0, 0, NULL, 0, CY7C65215_USB_TIMEOUT, NULL);
+	if (ret != ERROR_OK) {
 		LOG_ERROR("could not enable JTAG module");
 		goto err;
 	}
@@ -466,7 +466,7 @@ static int openjtag_init_cy7c65215(void)
 err:
 	if (usbh)
 		jtag_libusb_close(usbh);
-	return ERROR_JTAG_INIT_FAILED;
+	return ret;
 }
 
 static int openjtag_init(void)
@@ -508,8 +508,8 @@ static int openjtag_quit_cy7c65215(void)
 	ret = jtag_libusb_control_transfer(usbh,
 									   CY7C65215_JTAG_REQUEST,
 									   CY7C65215_JTAG_DISABLE,
-									   0, 0, NULL, 0, CY7C65215_USB_TIMEOUT);
-	if (ret < 0)
+									   0, 0, NULL, 0, CY7C65215_USB_TIMEOUT, NULL);
+	if (ret != ERROR_OK)
 		LOG_WARNING("could not disable JTAG module");
 
 	jtag_libusb_close(usbh);
@@ -742,16 +742,18 @@ static void openjtag_execute_runtest(struct jtag_command *cmd)
 		tap_set_state(TAP_IDLE);
 	}
 
-	if (cmd->cmd.runtest->num_cycles > 16)
-		LOG_WARNING("num_cycles > 16 on run test");
-
 	if (openjtag_variant != OPENJTAG_VARIANT_CY7C65215 ||
 		cmd->cmd.runtest->num_cycles) {
 		uint8_t command;
-		command = 7;
-		command |= ((cmd->cmd.runtest->num_cycles - 1) & 0x0F) << 4;
+		int cycles = cmd->cmd.runtest->num_cycles;
 
-		openjtag_add_byte(command);
+		do {
+			command = 7;
+			command |= (((cycles > 16 ? 16 : cycles) - 1) & 0x0F) << 4;
+
+			openjtag_add_byte(command);
+			cycles -= 16;
+		} while (cycles > 0);
 	}
 
 	tap_set_end_state(end_state);

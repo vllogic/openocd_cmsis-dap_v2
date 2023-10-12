@@ -713,7 +713,7 @@ static void hpm_xpi_free_driver_priv(struct flash_bank *bank)
 	default_flash_free_driver_priv(bank);
 }
 
-struct flash_driver hpm_xpi_flash = {
+const struct flash_driver hpm_xpi_flash = {
 	.name = "hpm_xpi",
 	.flash_bank_command = hpm_xpi_flash_bank_command,
 	.commands = hpm_xpi_command_handlers,

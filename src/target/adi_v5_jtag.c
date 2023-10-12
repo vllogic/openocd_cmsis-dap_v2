@@ -350,7 +350,7 @@ static int adi_jtag_dp_scan_u32(struct adiv5_dap *dap,
 {
 	uint8_t out_value_buf[4];
 	int retval;
-	uint64_t sel = (reg_addr >> 4) & 0xf;
+	uint64_t sel = (reg_addr >> 4) & DP_SELECT_DPBANK;
 
 	/* No need to change SELECT or RDBUFF as they are not banked */
 	if (instr == JTAG_DP_DPACC && reg_addr != DP_SELECT && reg_addr != DP_RDBUFF &&
@@ -566,13 +566,19 @@ static int jtagdp_overrun_check(struct adiv5_dap *dap)
 		/* restore SELECT register first */
 		if (!list_empty(&replay_list)) {
 			el = list_first_entry(&replay_list, struct dap_cmd, lh);
+
+			uint8_t out_value_buf[4];
+			buf_set_u32(out_value_buf, 0, 32, (uint32_t)(el->dp_select));
+
 			tmp = dap_cmd_new(dap, JTAG_DP_DPACC,
-					  DP_SELECT, DPAP_WRITE, (uint8_t *)&el->dp_select, NULL, 0);
+					  DP_SELECT, DPAP_WRITE, out_value_buf, NULL, 0);
 			if (!tmp) {
 				retval = ERROR_JTAG_DEVICE_ERROR;
 				goto done;
 			}
 			list_add(&tmp->lh, &replay_list);
+
+			/* TODO: ADIv6 DP SELECT1 handling */
 
 			dap->select = DP_SELECT_INVALID;
 		}
@@ -769,7 +775,7 @@ static int jtag_ap_q_bankselect(struct adiv5_ap *ap, unsigned reg)
 	}
 
 	/* ADIv5 */
-	sel = (ap->ap_num << 24) | (reg & 0x000000F0);
+	sel = (ap->ap_num << 24) | (reg & ADIV5_DP_SELECT_APBANK);
 
 	if (sel == dap->select)
 		return ERROR_OK;

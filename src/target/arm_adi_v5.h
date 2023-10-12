@@ -97,16 +97,16 @@
 
 #define DP_DLPIDR_PROTVSN	1u
 
-#define DP_SELECT_APSEL 0xFF000000
-#define DP_SELECT_APBANK 0x000000F0
-#define DP_SELECT_DPBANK 0x0000000F
-#define DP_SELECT_INVALID 0x00FFFF00 /* Reserved bits one */
+#define ADIV5_DP_SELECT_APSEL	0xFF000000
+#define ADIV5_DP_SELECT_APBANK	0x000000F0
+#define DP_SELECT_DPBANK		0x0000000F
+#define DP_SELECT_INVALID		0x00FFFF00 /* Reserved bits one */
 
-#define DP_APSEL_MAX        (255) /* for ADIv5 only */
-#define DP_APSEL_INVALID    0xF00 /* more than DP_APSEL_MAX and not ADIv6 aligned 4k */
+#define DP_APSEL_MAX			(255) /* Strict limit for ADIv5, number of AP buffers for ADIv6 */
+#define DP_APSEL_INVALID		0xF00 /* more than DP_APSEL_MAX and not ADIv6 aligned 4k */
 
-#define DP_TARGETSEL_INVALID 0xFFFFFFFFU
-#define DP_TARGETSEL_DPID_MASK 0x0FFFFFFFU
+#define DP_TARGETSEL_INVALID	0xFFFFFFFFU
+#define DP_TARGETSEL_DPID_MASK	0x0FFFFFFFU
 #define DP_TARGETSEL_INSTANCEID_MASK 0xF0000000U
 #define DP_TARGETSEL_INSTANCEID_SHIFT 28
 
@@ -454,6 +454,9 @@ enum ap_type {
 	AP_TYPE_AXI5_AP  = AP_REG_IDR_VALUE(ARM_ID, AP_REG_IDR_CLASS_MEM_AP, 7),  /* AXI5 Memory-AP */
 	AP_TYPE_AHB5H_AP = AP_REG_IDR_VALUE(ARM_ID, AP_REG_IDR_CLASS_MEM_AP, 8),  /* AHB5 with enhanced HPROT Memory-AP */
 };
+
+extern const struct dap_ops jtag_dp_ops;
+extern const struct dap_ops swd_dap_ops;
 
 /* Check the ap->cfg_reg Long Address field (bit 1)
  *

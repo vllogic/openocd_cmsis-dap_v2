@@ -50,12 +50,15 @@ static int autodetect_image_type(struct image *image, const char *url)
 	if (retval != ERROR_OK)
 		return retval;
 	retval = fileio_read(fileio, 9, buffer, &read_bytes);
-
-	if (retval == ERROR_OK) {
-		if (read_bytes != 9)
-			retval = ERROR_FILEIO_OPERATION_FAILED;
-	}
 	fileio_close(fileio);
+
+	/* If the file is smaller than 9 bytes, it can only be bin */
+	if (retval == ERROR_OK && read_bytes != 9) {
+		LOG_DEBUG("Less than 9 bytes in the image file found.");
+		LOG_DEBUG("BIN image detected.");
+		image->type = IMAGE_BINARY;
+		return ERROR_OK;
+	}
 
 	if (retval != ERROR_OK)
 		return retval;
@@ -82,8 +85,10 @@ static int autodetect_image_type(struct image *image, const char *url)
 		&& (buffer[1] >= '0') && (buffer[1] < '9')) {
 		LOG_DEBUG("S19 image detected.");
 		image->type = IMAGE_SRECORD;
-	} else
+	} else {
+		LOG_DEBUG("BIN image detected.");
 		image->type = IMAGE_BINARY;
+	}
 
 	return ERROR_OK;
 }
@@ -91,20 +96,22 @@ static int autodetect_image_type(struct image *image, const char *url)
 static int identify_image_type(struct image *image, const char *type_string, const char *url)
 {
 	if (type_string) {
-		if (!strcmp(type_string, "bin"))
+		if (!strcmp(type_string, "bin")) {
 			image->type = IMAGE_BINARY;
-		else if (!strcmp(type_string, "ihex"))
+		} else if (!strcmp(type_string, "ihex")) {
 			image->type = IMAGE_IHEX;
-		else if (!strcmp(type_string, "elf"))
+		} else if (!strcmp(type_string, "elf")) {
 			image->type = IMAGE_ELF;
-		else if (!strcmp(type_string, "mem"))
+		} else if (!strcmp(type_string, "mem")) {
 			image->type = IMAGE_MEMORY;
-		else if (!strcmp(type_string, "s19"))
+		} else if (!strcmp(type_string, "s19")) {
 			image->type = IMAGE_SRECORD;
-		else if (!strcmp(type_string, "build"))
+		} else if (!strcmp(type_string, "build")) {
 			image->type = IMAGE_BUILDER;
-		else
+		} else {
+			LOG_ERROR("Unknown image type: %s, use one of: bin, ihex, elf, mem, s19, build", type_string);
 			return ERROR_IMAGE_TYPE_UNKNOWN;
+		}
 	} else
 		return autodetect_image_type(image, url);
 
