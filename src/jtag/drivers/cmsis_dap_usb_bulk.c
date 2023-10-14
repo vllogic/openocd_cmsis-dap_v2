@@ -414,7 +414,7 @@ static int cmsis_dap_usb_write(struct cmsis_dap *dap, int txlen, int timeout_ms)
 	int err;
 	int tail = 0;
 
-	if ((txlen < dap->packet_buffer_size) && !(txlen % dap->packet_size)) {
+	if ((txlen < (int)dap->packet_buffer_size) && !(txlen % dap->packet_size)) {
 		tail = 1;
 	}
 
