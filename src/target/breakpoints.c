@@ -17,6 +17,11 @@
 #include "breakpoints.h"
 #include "smp.h"
 
+enum breakpoint_watchpoint {
+	BREAKPOINT,
+	WATCHPOINT,
+};
+
 static const char * const breakpoint_type_strings[] = {
 	"hardware",
 	"software"
@@ -367,30 +372,96 @@ int breakpoint_remove(struct target *target, target_addr_t address)
 		}
 	}
 
-	if (num_found_breakpoints == 0)
+	if (num_found_breakpoints == 0) {
 		LOG_TARGET_ERROR(target, "no breakpoint at address " TARGET_ADDR_FMT " found", address);
+		return ERROR_BREAKPOINT_NOT_FOUND;
+	}
 
 	return retval;
 }
 
-int breakpoint_remove_all(struct target *target)
+static int watchpoint_free(struct target *target, struct watchpoint *watchpoint_to_remove)
 {
+	struct watchpoint *watchpoint = target->watchpoints;
+	struct watchpoint **watchpoint_p = &target->watchpoints;
+	int retval;
+
+	while (watchpoint) {
+		if (watchpoint == watchpoint_to_remove)
+			break;
+		watchpoint_p = &watchpoint->next;
+		watchpoint = watchpoint->next;
+	}
+
+	if (!watchpoint)
+		return ERROR_OK;
+	retval = target_remove_watchpoint(target, watchpoint);
+	if (retval != ERROR_OK) {
+		LOG_TARGET_ERROR(target, "could not remove watchpoint #%d on this target",
+						 watchpoint->number);
+		return retval;
+	}
+
+	LOG_DEBUG("free WPID: %d --> %d", watchpoint->unique_id, retval);
+	(*watchpoint_p) = watchpoint->next;
+	free(watchpoint);
+
+	return ERROR_OK;
+}
+
+static int watchpoint_remove_all_internal(struct target *target)
+{
+	struct watchpoint *watchpoint = target->watchpoints;
+	int retval = ERROR_OK;
+
+	while (watchpoint) {
+		struct watchpoint *tmp = watchpoint;
+		watchpoint = watchpoint->next;
+		int status = watchpoint_free(target, tmp);
+		if (status != ERROR_OK)
+			retval = status;
+	}
+
+	return retval;
+}
+
+int breakpoint_watchpoint_remove_all(struct target *target, enum breakpoint_watchpoint bp_wp)
+{
+	assert(bp_wp == BREAKPOINT || bp_wp == WATCHPOINT);
 	int retval = ERROR_OK;
 	if (target->smp) {
 		struct target_list *head;
 
 		foreach_smp_target(head, target->smp_targets) {
 			struct target *curr = head->target;
-			int status = breakpoint_remove_all_internal(curr);
+
+			int status = ERROR_OK;
+			if (bp_wp == BREAKPOINT)
+				status = breakpoint_remove_all_internal(curr);
+			else
+				status = watchpoint_remove_all_internal(curr);
 
 			if (status != ERROR_OK)
 				retval = status;
 		}
 	} else {
-		retval = breakpoint_remove_all_internal(target);
+		if (bp_wp == BREAKPOINT)
+			retval = breakpoint_remove_all_internal(target);
+		else
+			retval = watchpoint_remove_all_internal(target);
 	}
 
 	return retval;
+}
+
+int breakpoint_remove_all(struct target *target)
+{
+	return breakpoint_watchpoint_remove_all(target, BREAKPOINT);
+}
+
+int watchpoint_remove_all(struct target *target)
+{
+	return breakpoint_watchpoint_remove_all(target, WATCHPOINT);
 }
 
 static int breakpoint_clear_target_internal(struct target *target)
@@ -530,35 +601,6 @@ int watchpoint_add(struct target *target, target_addr_t address,
 	}
 }
 
-static int watchpoint_free(struct target *target, struct watchpoint *watchpoint_to_remove)
-{
-	struct watchpoint *watchpoint = target->watchpoints;
-	struct watchpoint **watchpoint_p = &target->watchpoints;
-	int retval;
-
-	while (watchpoint) {
-		if (watchpoint == watchpoint_to_remove)
-			break;
-		watchpoint_p = &watchpoint->next;
-		watchpoint = watchpoint->next;
-	}
-
-	if (!watchpoint)
-		return ERROR_OK;
-	retval = target_remove_watchpoint(target, watchpoint);
-	if (retval != ERROR_OK) {
-		LOG_TARGET_ERROR(target, "could not remove watchpoint #%d on this target",
-						watchpoint->number);
-		return retval;
-	}
-
-	LOG_DEBUG("free WPID: %d --> %d", watchpoint->unique_id, retval);
-	(*watchpoint_p) = watchpoint->next;
-	free(watchpoint);
-
-	return ERROR_OK;
-}
-
 static int watchpoint_remove_internal(struct target *target, target_addr_t address)
 {
 	struct watchpoint *watchpoint = target->watchpoints;
@@ -591,7 +633,7 @@ int watchpoint_remove(struct target *target, target_addr_t address)
 				num_found_watchpoints++;
 
 				if (status != ERROR_OK) {
-					LOG_TARGET_ERROR(curr, "failed to remove watchpoint at address" TARGET_ADDR_FMT, address);
+					LOG_TARGET_ERROR(curr, "failed to remove watchpoint at address " TARGET_ADDR_FMT, address);
 					retval = status;
 				}
 			}
@@ -603,12 +645,14 @@ int watchpoint_remove(struct target *target, target_addr_t address)
 			num_found_watchpoints++;
 
 			if (retval != ERROR_OK)
-				LOG_TARGET_ERROR(target, "failed to remove watchpoint at address" TARGET_ADDR_FMT, address);
+				LOG_TARGET_ERROR(target, "failed to remove watchpoint at address " TARGET_ADDR_FMT, address);
 		}
 	}
 
-	if (num_found_watchpoints == 0)
+	if (num_found_watchpoints == 0) {
 		LOG_TARGET_ERROR(target, "no watchpoint at address " TARGET_ADDR_FMT " found", address);
+		return ERROR_WATCHPOINT_NOT_FOUND;
+	}
 
 	return retval;
 }
