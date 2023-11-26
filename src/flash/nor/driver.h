@@ -240,7 +240,7 @@ const struct flash_driver *flash_driver_find_by_name(const char *name);
 extern const struct flash_driver aduc702x_flash;
 extern const struct flash_driver aducm360_flash;
 extern const struct flash_driver ambiqmicro_flash;
-extern const struct flash_driver aic8800x_flash;
+extern const struct flash_driver aic8800_flash;
 extern const struct flash_driver aic8800mc_flash;
 extern const struct flash_driver aic8800m40_flash;
 extern const struct flash_driver at91sam3_flash;
