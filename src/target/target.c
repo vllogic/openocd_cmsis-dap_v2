@@ -298,23 +298,6 @@ const char *target_reset_mode_name(enum target_reset_mode reset_mode)
 	return cp;
 }
 
-/* determine the number of the new target */
-static int new_target_number(void)
-{
-	struct target *t;
-	int x;
-
-	/* number is 0 based */
-	x = -1;
-	t = all_targets;
-	while (t) {
-		if (x < t->target_number)
-			x = t->target_number;
-		t = t->next;
-	}
-	return x + 1;
-}
-
 static void append_to_list_all_targets(struct target *target)
 {
 	struct target **t = &all_targets;
@@ -450,7 +433,7 @@ void target_buffer_set_u16_array(struct target *target, uint8_t *buffer, uint32_
 		target_buffer_set_u16(target, &buffer[i * 2], srcbuf[i]);
 }
 
-/* return a pointer to a configured target; id is name or number */
+/* return a pointer to a configured target; id is name or index in all_targets */
 struct target *get_target(const char *id)
 {
 	struct target *target;
@@ -463,36 +446,17 @@ struct target *get_target(const char *id)
 			return target;
 	}
 
-	/* It's OK to remove this fallback sometime after August 2010 or so */
-
-	/* no match, try as number */
-	unsigned num;
-	if (parse_uint(id, &num) != ERROR_OK)
+	/* try as index */
+	unsigned int index, counter;
+	if (parse_uint(id, &index) != ERROR_OK)
 		return NULL;
 
-	for (target = all_targets; target; target = target->next) {
-		if (target->target_number == (int)num) {
-			LOG_WARNING("use '%s' as target identifier, not '%u'",
-					target_name(target), num);
-			return target;
-		}
-	}
+	for (target = all_targets, counter = index;
+			target && counter;
+			target = target->next, --counter)
+		;
 
-	return NULL;
-}
-
-/* returns a pointer to the n-th configured target */
-struct target *get_target_by_num(int num)
-{
-	struct target *target = all_targets;
-
-	while (target) {
-		if (target->target_number == num)
-			return target;
-		target = target->next;
-	}
-
-	return NULL;
+	return target;
 }
 
 struct target *get_current_target(struct command_context *cmd_ctx)
@@ -2212,6 +2176,9 @@ uint32_t target_get_working_area_avail(struct target *target)
 
 static void target_destroy(struct target *target)
 {
+	breakpoint_remove_all(target);
+	watchpoint_remove_all(target);
+
 	if (target->type->deinit_target)
 		target->type->deinit_target(target);
 
@@ -2840,10 +2807,10 @@ COMMAND_HANDLER(handle_targets_command)
 		}
 	}
 
-	struct target *target = all_targets;
+	unsigned int index = 0;
 	command_print(CMD, "    TargetName         Type       Endian TapName            State       ");
 	command_print(CMD, "--  ------------------ ---------- ------ ------------------ ------------");
-	while (target) {
+	for (struct target *target = all_targets; target; target = target->next, ++index) {
 		const char *state;
 		char marker = ' ';
 
@@ -2858,7 +2825,7 @@ COMMAND_HANDLER(handle_targets_command)
 		/* keep columns lined up to match the headers above */
 		command_print(CMD,
 				"%2d%c %-18s %-10s %-6s %-18s %s",
-				target->target_number,
+				index,
 				marker,
 				target_name(target),
 				target_type_name(target),
@@ -2866,7 +2833,6 @@ COMMAND_HANDLER(handle_targets_command)
 					target->endianness)->name,
 				target->tap->dotted_name,
 				state);
-		target = target->next;
 	}
 
 	return retval;
@@ -3139,9 +3105,9 @@ COMMAND_HANDLER(handle_reg_command)
 	if ((CMD_ARGC == 1) || ((CMD_ARGC == 2) && !((CMD_ARGV[1][0] >= '0')
 			&& (CMD_ARGV[1][0] <= '9')))) {
 		if ((CMD_ARGC == 2) && (strcmp(CMD_ARGV[1], "force") == 0))
-			reg->valid = 0;
+			reg->valid = false;
 
-		if (reg->valid == 0) {
+		if (!reg->valid) {
 			int retval = reg->type->get(reg);
 			if (retval != ERROR_OK) {
 				LOG_ERROR("Could not read register '%s'", reg->name);
@@ -3971,7 +3937,7 @@ static int handle_bp_command_set(struct command_invocation *cmd,
 
 	} else if (addr == 0) {
 		if (!target->type->add_context_breakpoint) {
-			LOG_ERROR("Context breakpoint not available");
+			LOG_TARGET_ERROR(target, "Context breakpoint not available");
 			return ERROR_TARGET_RESOURCE_NOT_AVAILABLE;
 		}
 		retval = context_breakpoint_add(target, asid, length, hw);
@@ -3981,7 +3947,7 @@ static int handle_bp_command_set(struct command_invocation *cmd,
 
 	} else {
 		if (!target->type->add_hybrid_breakpoint) {
-			LOG_ERROR("Hybrid breakpoint not available");
+			LOG_TARGET_ERROR(target, "Hybrid breakpoint not available");
 			return ERROR_TARGET_RESOURCE_NOT_AVAILABLE;
 		}
 		retval = hybrid_breakpoint_add(target, addr, asid, length, hw);
@@ -4118,7 +4084,7 @@ COMMAND_HANDLER(handle_wp_command)
 			type = WPT_ACCESS;
 			break;
 		default:
-			LOG_ERROR("invalid watchpoint mode ('%c')", CMD_ARGV[2][0]);
+			LOG_TARGET_ERROR(target, "invalid watchpoint mode ('%c')", CMD_ARGV[2][0]);
 			return ERROR_COMMAND_SYNTAX_ERROR;
 		}
 		/* fall through */
@@ -4134,7 +4100,7 @@ COMMAND_HANDLER(handle_wp_command)
 	int retval = watchpoint_add(target, addr, length, type,
 			data_value, data_mask);
 	if (retval != ERROR_OK)
-		LOG_ERROR("Failure setting watchpoints");
+		LOG_TARGET_ERROR(target, "Failure setting watchpoints");
 
 	return retval;
 }
@@ -5060,8 +5026,7 @@ void target_handle_event(struct target *target, enum target_event e)
 
 	for (teap = target->event_action; teap; teap = teap->next) {
 		if (teap->event == e) {
-			LOG_DEBUG("target(%d): %s (%s) event: %d (%s) action: %s",
-					   target->target_number,
+			LOG_DEBUG("target: %s (%s) event: %d (%s) action: %s",
 					   target_name(target),
 					   target_type_name(target),
 					   e,
@@ -5149,7 +5114,7 @@ static int target_jim_get_reg(Jim_Interp *interp, int argc,
 			return JIM_ERR;
 		}
 
-		if (force) {
+		if (force || !reg->valid) {
 			int retval = reg->type->get(reg);
 
 			if (retval != ERROR_OK) {
@@ -5846,8 +5811,7 @@ COMMAND_HANDLER(handle_target_event_list)
 	struct target *target = get_current_target(CMD_CTX);
 	struct target_event_action *teap = target->event_action;
 
-	command_print(CMD, "Event actions for target (%d) %s\n",
-				   target->target_number,
+	command_print(CMD, "Event actions for target %s\n",
 				   target_name(target));
 	command_print(CMD, "%-25s | Body", "Event");
 	command_print(CMD, "------------------------- | "
@@ -5870,6 +5834,28 @@ COMMAND_HANDLER(handle_target_current_state)
 	struct target *target = get_current_target(CMD_CTX);
 
 	command_print(CMD, "%s", target_state_name(target));
+
+	return ERROR_OK;
+}
+
+COMMAND_HANDLER(handle_target_debug_reason)
+{
+	if (CMD_ARGC != 0)
+		return ERROR_COMMAND_SYNTAX_ERROR;
+
+	struct target *target = get_current_target(CMD_CTX);
+
+
+	const char *debug_reason = nvp_value2name(nvp_target_debug_reason,
+		target->debug_reason)->name;
+
+	if (!debug_reason) {
+		command_print(CMD, "bug: invalid debug reason (%d)",
+			target->debug_reason);
+		return ERROR_FAIL;
+	}
+
+	command_print(CMD, "%s", debug_reason);
 
 	return ERROR_OK;
 }
@@ -6026,6 +6012,13 @@ static const struct command_registration target_instance_command_handlers[] = {
 		.usage = "",
 	},
 	{
+		.name = "debug_reason",
+		.mode = COMMAND_EXEC,
+		.handler = handle_target_debug_reason,
+		.help = "displays the debug reason of this target",
+		.usage = "",
+	},
+	{
 		.name = "arp_examine",
 		.mode = COMMAND_EXEC,
 		.handler = handle_target_examine,
@@ -6124,7 +6117,7 @@ static int target_create(struct jim_getopt_info *goi)
 	if (e != JIM_OK)
 		return e;
 	struct transport *tr = get_current_transport();
-	if (tr->override_target) {
+	if (tr && tr->override_target) {
 		e = tr->override_target(&cp);
 		if (e != ERROR_OK) {
 			LOG_ERROR("The selected transport doesn't support this target");
@@ -6166,9 +6159,6 @@ static int target_create(struct jim_getopt_info *goi)
 
 	/* set empty smp cluster */
 	target->smp_targets = &empty_smp_targets;
-
-	/* set target number */
-	target->target_number = new_target_number();
 
 	/* allocate memory for each unique target type */
 	target->type = malloc(sizeof(struct target_type));

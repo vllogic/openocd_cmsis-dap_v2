@@ -52,7 +52,7 @@ static int breakpoint_add_internal(struct target *target,
 			 * breakpoint" ... check all the parameters before
 			 * succeeding.
 			 */
-			LOG_ERROR("Duplicate Breakpoint address: " TARGET_ADDR_FMT " (BP %" PRIu32 ")",
+			LOG_TARGET_ERROR(target, "Duplicate Breakpoint address: " TARGET_ADDR_FMT " (BP %" PRIu32 ")",
 				address, breakpoint->unique_id);
 			return ERROR_TARGET_DUPLICATE_BREAKPOINT;
 		}
@@ -83,16 +83,15 @@ static int breakpoint_add_internal(struct target *target,
 		default:
 			reason = "unknown reason";
 fail:
-			LOG_ERROR("can't add breakpoint: %s", reason);
+			LOG_TARGET_ERROR(target, "can't add breakpoint: %s", reason);
 			free((*breakpoint_p)->orig_instr);
 			free(*breakpoint_p);
 			*breakpoint_p = NULL;
 			return retval;
 	}
 
-	LOG_DEBUG("[%d] added %s breakpoint at " TARGET_ADDR_FMT
+	LOG_TARGET_DEBUG(target, "added %s breakpoint at " TARGET_ADDR_FMT
 			" of length 0x%8.8x, (BPID: %" PRIu32 ")",
-		target->coreid,
 		breakpoint_type_strings[(*breakpoint_p)->type],
 		(*breakpoint_p)->address, (*breakpoint_p)->length,
 		(*breakpoint_p)->unique_id);
@@ -134,14 +133,14 @@ static int context_breakpoint_add_internal(struct target *target,
 	(*breakpoint_p)->unique_id = bpwp_unique_id++;
 	retval = target_add_context_breakpoint(target, *breakpoint_p);
 	if (retval != ERROR_OK) {
-		LOG_ERROR("could not add breakpoint");
+		LOG_TARGET_ERROR(target, "could not add breakpoint");
 		free((*breakpoint_p)->orig_instr);
 		free(*breakpoint_p);
 		*breakpoint_p = NULL;
 		return retval;
 	}
 
-	LOG_DEBUG("added %s Context breakpoint at 0x%8.8" PRIx32 " of length 0x%8.8x, (BPID: %" PRIu32 ")",
+	LOG_TARGET_DEBUG(target, "added %s Context breakpoint at 0x%8.8" PRIx32 " of length 0x%8.8x, (BPID: %" PRIu32 ")",
 		breakpoint_type_strings[(*breakpoint_p)->type],
 		(*breakpoint_p)->asid, (*breakpoint_p)->length,
 		(*breakpoint_p)->unique_id);
@@ -165,11 +164,11 @@ static int hybrid_breakpoint_add_internal(struct target *target,
 			 * breakpoint" ... check all the parameters before
 			 * succeeding.
 			 */
-			LOG_ERROR("Duplicate Hybrid Breakpoint asid: 0x%08" PRIx32 " (BP %" PRIu32 ")",
+			LOG_TARGET_ERROR(target, "Duplicate Hybrid Breakpoint asid: 0x%08" PRIx32 " (BP %" PRIu32 ")",
 				asid, breakpoint->unique_id);
 			return ERROR_TARGET_DUPLICATE_BREAKPOINT;
 		} else if ((breakpoint->address == address) && (breakpoint->asid == 0)) {
-			LOG_ERROR("Duplicate Breakpoint IVA: " TARGET_ADDR_FMT " (BP %" PRIu32 ")",
+			LOG_TARGET_ERROR(target, "Duplicate Breakpoint IVA: " TARGET_ADDR_FMT " (BP %" PRIu32 ")",
 				address, breakpoint->unique_id);
 			return ERROR_TARGET_DUPLICATE_BREAKPOINT;
 
@@ -190,13 +189,13 @@ static int hybrid_breakpoint_add_internal(struct target *target,
 
 	retval = target_add_hybrid_breakpoint(target, *breakpoint_p);
 	if (retval != ERROR_OK) {
-		LOG_ERROR("could not add breakpoint");
+		LOG_TARGET_ERROR(target, "could not add breakpoint");
 		free((*breakpoint_p)->orig_instr);
 		free(*breakpoint_p);
 		*breakpoint_p = NULL;
 		return retval;
 	}
-	LOG_DEBUG(
+	LOG_TARGET_DEBUG(target,
 		"added %s Hybrid breakpoint at address " TARGET_ADDR_FMT " of length 0x%8.8x, (BPID: %" PRIu32 ")",
 		breakpoint_type_strings[(*breakpoint_p)->type],
 		(*breakpoint_p)->address,
@@ -298,7 +297,7 @@ static int breakpoint_free(struct target *target, struct breakpoint *breakpoint_
 		return retval;
 	}
 
-	LOG_DEBUG("free BPID: %" PRIu32 " --> %d", breakpoint->unique_id, retval);
+	LOG_TARGET_DEBUG(target, "free BPID: %" PRIu32 " --> %d", breakpoint->unique_id, retval);
 	(*breakpoint_p) = breakpoint->next;
 	free(breakpoint->orig_instr);
 	free(breakpoint);
@@ -326,6 +325,8 @@ static int breakpoint_remove_internal(struct target *target, target_addr_t addre
 
 static int breakpoint_remove_all_internal(struct target *target)
 {
+	LOG_TARGET_DEBUG(target, "Delete all breakpoints");
+
 	struct breakpoint *breakpoint = target->breakpoints;
 	int retval = ERROR_OK;
 
@@ -402,7 +403,7 @@ static int watchpoint_free(struct target *target, struct watchpoint *watchpoint_
 		return retval;
 	}
 
-	LOG_DEBUG("free WPID: %d --> %d", watchpoint->unique_id, retval);
+	LOG_TARGET_DEBUG(target, "free WPID: %d --> %d", watchpoint->unique_id, retval);
 	(*watchpoint_p) = watchpoint->next;
 	free(watchpoint);
 
@@ -425,7 +426,7 @@ static int watchpoint_remove_all_internal(struct target *target)
 	return retval;
 }
 
-int breakpoint_watchpoint_remove_all(struct target *target, enum breakpoint_watchpoint bp_wp)
+static int breakpoint_watchpoint_remove_all(struct target *target, enum breakpoint_watchpoint bp_wp)
 {
 	assert(bp_wp == BREAKPOINT || bp_wp == WATCHPOINT);
 	int retval = ERROR_OK;
@@ -464,22 +465,6 @@ int watchpoint_remove_all(struct target *target)
 	return breakpoint_watchpoint_remove_all(target, WATCHPOINT);
 }
 
-static int breakpoint_clear_target_internal(struct target *target)
-{
-	LOG_DEBUG("Delete all breakpoints for target: %s",
-		target_name(target));
-
-	int retval = ERROR_OK;
-
-	while (target->breakpoints) {
-		int status = breakpoint_free(target, target->breakpoints);
-		if (status != ERROR_OK)
-			retval = status;
-	}
-
-	return retval;
-}
-
 int breakpoint_clear_target(struct target *target)
 {
 	int retval = ERROR_OK;
@@ -489,13 +474,13 @@ int breakpoint_clear_target(struct target *target)
 
 		foreach_smp_target(head, target->smp_targets) {
 			struct target *curr = head->target;
-			int status = breakpoint_clear_target_internal(curr);
+			int status = breakpoint_remove_all_internal(curr);
 
 			if (status != ERROR_OK)
 				retval = status;
 		}
 	} else {
-		retval = breakpoint_clear_target_internal(target);
+		retval = breakpoint_remove_all_internal(target);
 	}
 
 	return retval;
@@ -528,7 +513,7 @@ static int watchpoint_add_internal(struct target *target, target_addr_t address,
 				|| watchpoint->value != value
 				|| watchpoint->mask != mask
 				|| watchpoint->rw != rw) {
-				LOG_ERROR("address " TARGET_ADDR_FMT
+				LOG_TARGET_ERROR(target, "address " TARGET_ADDR_FMT
 					" already has watchpoint %d",
 					address, watchpoint->unique_id);
 				return ERROR_FAIL;
@@ -562,7 +547,7 @@ static int watchpoint_add_internal(struct target *target, target_addr_t address,
 		default:
 			reason = "unrecognized error";
 bye:
-			LOG_ERROR("can't add %s watchpoint at " TARGET_ADDR_FMT ", %s",
+			LOG_TARGET_ERROR(target, "can't add %s watchpoint at " TARGET_ADDR_FMT ", %s",
 				watchpoint_rw_strings[(*watchpoint_p)->rw],
 				address, reason);
 			free(*watchpoint_p);
@@ -570,9 +555,8 @@ bye:
 			return retval;
 	}
 
-	LOG_DEBUG("[%d] added %s watchpoint at " TARGET_ADDR_FMT
+	LOG_TARGET_DEBUG(target, "added %s watchpoint at " TARGET_ADDR_FMT
 			" of length 0x%8.8" PRIx32 " (WPID: %d)",
-		target->coreid,
 		watchpoint_rw_strings[(*watchpoint_p)->rw],
 		(*watchpoint_p)->address,
 		(*watchpoint_p)->length,
@@ -659,16 +643,19 @@ int watchpoint_remove(struct target *target, target_addr_t address)
 
 int watchpoint_clear_target(struct target *target)
 {
-	int retval = ERROR_OK;
-
 	LOG_DEBUG("Delete all watchpoints for target: %s",
 		target_name(target));
-	while (target->watchpoints) {
-		int status = watchpoint_free(target, target->watchpoints);
+
+	struct watchpoint *watchpoint = target->watchpoints;
+	int retval = ERROR_OK;
+
+	while (watchpoint) {
+		struct watchpoint *tmp = watchpoint;
+		watchpoint = watchpoint->next;
+		int status = watchpoint_free(target, tmp);
 		if (status != ERROR_OK)
 			retval = status;
 	}
-
 	return retval;
 }
 
@@ -685,7 +672,7 @@ int watchpoint_hit(struct target *target, enum watchpoint_rw *rw,
 	*rw = hit_watchpoint->rw;
 	*address = hit_watchpoint->address;
 
-	LOG_DEBUG("Found hit watchpoint at " TARGET_ADDR_FMT " (WPID: %d)",
+	LOG_TARGET_DEBUG(target, "Found hit watchpoint at " TARGET_ADDR_FMT " (WPID: %d)",
 		hit_watchpoint->address,
 		hit_watchpoint->unique_id);
 
