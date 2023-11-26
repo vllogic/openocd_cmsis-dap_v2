@@ -11,7 +11,7 @@ noinst_LTLIBRARIES += %D%/libocdflashnor.la
 NOR_DRIVERS = \
 	%D%/aduc702x.c \
 	%D%/aducm360.c \
-	%D%/aic8800x.c \
+	%D%/aic8800.c \
 	%D%/aic8800mc.c \
 	%D%/aic8800m40.c \
 	%D%/ambiqmicro.c \
