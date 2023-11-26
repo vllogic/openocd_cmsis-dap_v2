@@ -412,15 +412,17 @@ static int cmsis_dap_usb_write(struct cmsis_dap *dap, int txlen, int timeout_ms)
 {
 	int transferred = 0;
 	int err;
-	int tail = 0;
+	unsigned int tail = 0;
+	unsigned int size = txlen;
 
-	if ((txlen < (int)dap->packet_buffer_size) && !(txlen % dap->packet_size)) {
+	if ((size < dap->packet_buffer_size) && !(size % dap->packet_size)) {
 		tail = 1;
+		size += tail;
 	}
 
 	/* skip the first byte that is only used by the HID backend */
 	err = libusb_bulk_transfer(dap->bdata->dev_handle, dap->bdata->ep_out,
-							dap->packet_buffer, txlen + tail, &transferred, timeout_ms);
+							dap->packet_buffer, size, &transferred, timeout_ms);
 	if (err) {
 		if (err == LIBUSB_ERROR_TIMEOUT) {
 			return ERROR_TIMEOUT_REACHED;
