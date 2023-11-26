@@ -352,17 +352,25 @@ static int cmsis_dap_usb_open(struct cmsis_dap *dap, uint16_t vids[], uint16_t p
 				return ERROR_FAIL;
 			}
 
+			dap->packet_size = packet_size;
+			dap->packet_buffer_size = packet_size;
 			dap->bdata->usb_ctx = ctx;
 			dap->bdata->dev_handle = dev_handle;
 			dap->bdata->ep_out = ep_out;
 			dap->bdata->ep_in = ep_in;
 			dap->bdata->interface = interface_num;
 
-			err = cmsis_dap_usb_alloc(dap, packet_size);
-			if (err != ERROR_OK)
+			dap->packet_buffer = malloc(dap->packet_buffer_size);
+			if (!dap->packet_buffer) {
+				LOG_ERROR("unable to allocate memory");
 				cmsis_dap_usb_close(dap);
+				return ERROR_FAIL;
+			}
 
-			return err;
+			dap->command = dap->packet_buffer;
+			dap->response = dap->packet_buffer;
+
+			return ERROR_OK;
 		}
 
 		libusb_close(dev_handle);
@@ -412,17 +420,15 @@ static int cmsis_dap_usb_write(struct cmsis_dap *dap, int txlen, int timeout_ms)
 {
 	int transferred = 0;
 	int err;
-	unsigned int tail = 0;
-	unsigned int size = txlen;
+	int tail = 0;
 
-	if ((size < dap->packet_buffer_size) && !(size % dap->packet_size)) {
+	if ((txlen < dap->packet_buffer_size) && !(txlen % dap->packet_size)) {
 		tail = 1;
-		size += tail;
 	}
 
 	/* skip the first byte that is only used by the HID backend */
 	err = libusb_bulk_transfer(dap->bdata->dev_handle, dap->bdata->ep_out,
-							dap->packet_buffer, size, &transferred, timeout_ms);
+							dap->packet_buffer, txlen + tail, &transferred, timeout_ms);
 	if (err) {
 		if (err == LIBUSB_ERROR_TIMEOUT) {
 			return ERROR_TIMEOUT_REACHED;
@@ -446,8 +452,6 @@ static int cmsis_dap_usb_alloc(struct cmsis_dap *dap, unsigned int pkt_sz)
 	dap->packet_buffer = buf;
 	//dap->packet_size = pkt_sz;
 	dap->packet_buffer_size = pkt_sz;
-	/* Prevent sending zero size USB packets */
-	dap->packet_usable_size = pkt_sz - 1;
 
 	dap->command = dap->packet_buffer;
 	dap->response = dap->packet_buffer;
