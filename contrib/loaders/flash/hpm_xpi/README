@@ -1,6 +1,0 @@
-HPMicro
-
-openocd_algo is an example in hpm_sdk, located at ${HPM_SDK_BASE}/samples/openocd_flash_algo,
-please refer to hpm_sdk readme to build it.
-
-for more details, please refer to https://www.hpmicro.com/resources/software.html
