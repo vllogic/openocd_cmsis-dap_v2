@@ -1173,7 +1173,7 @@ static const struct command_registration at32qspi_command_handlers[] = {
 	COMMAND_REGISTRATION_DONE
 };
 
-struct flash_driver at32qspi_flash = {
+const struct flash_driver at32qspi_flash = {
 	.name = "at32qspi",
 	.commands = at32qspi_command_handlers,
 	.flash_bank_command = at32qspi_flash_bank_command,
