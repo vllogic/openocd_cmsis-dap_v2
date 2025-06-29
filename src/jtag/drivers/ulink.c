@@ -212,7 +212,7 @@ static int ulink_append_test_cmd(struct ulink *device);
 static int ulink_calculate_delay(enum ulink_delay_type type, long f, int *delay);
 
 /* Interface between OpenULINK and OpenOCD */
-static void ulink_set_end_state(tap_state_t endstate);
+static void ulink_set_end_state(enum tap_state endstate);
 static int ulink_queue_statemove(struct ulink *device);
 
 static int ulink_queue_scan(struct ulink *device, struct jtag_command *cmd);
@@ -227,7 +227,7 @@ static int ulink_post_process_scan(struct ulink_cmd *ulink_cmd);
 static int ulink_post_process_queue(struct ulink *device);
 
 /* adapter driver functions */
-static int ulink_execute_queue(void);
+static int ulink_execute_queue(struct jtag_command *cmd_queue);
 static int ulink_khz(int khz, int *jtag_speed);
 static int ulink_speed(int speed);
 static int ulink_speed_div(int speed, int *khz);
@@ -606,7 +606,7 @@ static void ulink_clear_queue(struct ulink *device)
 
 		/* IN payload MUST be freed ONLY if no other commands use the
 		 * payload_in_start buffer */
-		if (current->free_payload_in_start == true) {
+		if (current->free_payload_in_start) {
 			free(current->payload_in_start);
 			current->payload_in_start = NULL;
 			current->payload_in = NULL;
@@ -1393,7 +1393,7 @@ static long ulink_calculate_frequency(enum ulink_delay_type type, int delay)
  *
  * @param endstate the state the end state follower should be set to.
  */
-static void ulink_set_end_state(tap_state_t endstate)
+static void ulink_set_end_state(enum tap_state endstate)
 {
 	if (tap_is_state_stable(endstate))
 		tap_set_end_state(endstate);
@@ -1473,7 +1473,7 @@ static int ulink_queue_scan(struct ulink *device, struct jtag_command *cmd)
 
 	/* Allocate TDO buffer if required */
 	if ((type == SCAN_IN) || (type == SCAN_IO)) {
-		tdo_buffer_start = calloc(sizeof(uint8_t), scan_size_bytes);
+		tdo_buffer_start = calloc(scan_size_bytes, sizeof(uint8_t));
 
 		if (!tdo_buffer_start)
 			return ERROR_FAIL;
@@ -1701,15 +1701,17 @@ static int ulink_queue_reset(struct ulink *device, struct jtag_command *cmd)
  */
 static int ulink_queue_pathmove(struct ulink *device, struct jtag_command *cmd)
 {
-	int ret, i, num_states, batch_size, state_count;
-	tap_state_t *path;
+	int ret, state_count;
+	enum tap_state *path;
 	uint8_t tms_sequence;
 
-	num_states = cmd->cmd.pathmove->num_states;
+	unsigned int num_states = cmd->cmd.pathmove->num_states;
 	path = cmd->cmd.pathmove->path;
 	state_count = 0;
 
 	while (num_states > 0) {
+		unsigned int batch_size;
+
 		tms_sequence = 0;
 
 		/* Determine batch size */
@@ -1718,7 +1720,7 @@ static int ulink_queue_pathmove(struct ulink *device, struct jtag_command *cmd)
 		else
 			batch_size = num_states;
 
-		for (i = 0; i < batch_size; i++) {
+		for (unsigned int i = 0; i < batch_size; i++) {
 			if (tap_state_transition(tap_get_state(), false) == path[state_count]) {
 				/* Append '0' transition: clear bit 'i' in tms_sequence */
 				buf_set_u32(&tms_sequence, i, 1, 0x0);
@@ -1774,14 +1776,13 @@ static int ulink_queue_sleep(struct ulink *device, struct jtag_command *cmd)
 static int ulink_queue_stableclocks(struct ulink *device, struct jtag_command *cmd)
 {
 	int ret;
-	unsigned num_cycles;
 
 	if (!tap_is_state_stable(tap_get_state())) {
 		LOG_ERROR("JTAG_STABLECLOCKS: state not stable");
 		return ERROR_FAIL;
 	}
 
-	num_cycles = cmd->cmd.stableclocks->num_cycles;
+	unsigned int num_cycles = cmd->cmd.stableclocks->num_cycles;
 
 	/* TMS stays either high (Test Logic Reset state) or low (all other states) */
 	if (tap_get_state() == TAP_RESET)
@@ -1860,7 +1861,7 @@ static int ulink_post_process_queue(struct ulink *device)
 
 		/* Check if a corresponding OpenOCD command is stored for this
 		 * OpenULINK command */
-		if ((current->needs_postprocessing == true) && (openocd_cmd)) {
+		if (current->needs_postprocessing && openocd_cmd) {
 			switch (openocd_cmd->type) {
 			    case JTAG_SCAN:
 				    ret = ulink_post_process_scan(current);
@@ -1905,9 +1906,9 @@ static int ulink_post_process_queue(struct ulink *device)
  * @return on success: ERROR_OK
  * @return on failure: ERROR_FAIL
  */
-static int ulink_execute_queue(void)
+static int ulink_execute_queue(struct jtag_command *cmd_queue)
 {
-	struct jtag_command *cmd = jtag_command_queue;
+	struct jtag_command *cmd = cmd_queue;
 	int ret;
 
 	while (cmd) {
@@ -2130,7 +2131,7 @@ static int ulink_init(void)
 			download_firmware = true;
 	}
 
-	if (download_firmware == true) {
+	if (download_firmware) {
 		LOG_INFO("Loading OpenULINK firmware. This is reversible by power-cycling"
 			" ULINK device.");
 		ret = ulink_load_firmware_and_renumerate(&ulink_handle,
@@ -2270,7 +2271,8 @@ static struct jtag_interface ulink_interface = {
 
 struct adapter_driver ulink_adapter_driver = {
 	.name = "ulink",
-	.transports = jtag_only,
+	.transport_ids = TRANSPORT_JTAG,
+	.transport_preferred_id = TRANSPORT_JTAG,
 	.commands = ulink_command_handlers,
 
 	.init = ulink_init,

@@ -86,9 +86,7 @@ static const struct adapter_gpio_config *adapter_gpio_config;
 
 static bool is_gpio_config_valid(const struct adapter_gpio_config *gpio_config)
 {
-	return gpio_config->chip_num >= 0
-		&& gpio_config->chip_num < AM335XGPIO_NUM_GPIO_CHIPS
-		&& gpio_config->gpio_num >= 0
+	return gpio_config->chip_num < AM335XGPIO_NUM_GPIO_CHIPS
 		&& gpio_config->gpio_num < AM335XGPIO_NUM_GPIO_PER_CHIP;
 }
 
@@ -208,7 +206,7 @@ static void restore_gpio(enum adapter_gpio_config_index idx)
 	}
 }
 
-static bb_value_t am335xgpio_read(void)
+static enum bb_value am335xgpio_read(void)
 {
 	return get_gpio_value(&adapter_gpio_config[ADAPTER_GPIO_IDX_TDO]) ? BB_HIGH : BB_LOW;
 }
@@ -249,10 +247,13 @@ static int am335xgpio_reset(int trst, int srst)
 	if (is_gpio_config_valid(&adapter_gpio_config[ADAPTER_GPIO_IDX_TRST]))
 		set_gpio_value(&adapter_gpio_config[ADAPTER_GPIO_IDX_TRST], trst);
 
-	LOG_DEBUG("am335xgpio_reset(%d, %d), trst_gpio: %d %d, srst_gpio: %d %d",
-		trst, srst,
-		adapter_gpio_config[ADAPTER_GPIO_IDX_TRST].chip_num, adapter_gpio_config[ADAPTER_GPIO_IDX_TRST].gpio_num,
-		adapter_gpio_config[ADAPTER_GPIO_IDX_SRST].chip_num, adapter_gpio_config[ADAPTER_GPIO_IDX_SRST].gpio_num);
+	LOG_DEBUG("trst %d gpio: %d %d, srst %d gpio: %d %d",
+		trst,
+		(int)adapter_gpio_config[ADAPTER_GPIO_IDX_TRST].chip_num,
+		(int)adapter_gpio_config[ADAPTER_GPIO_IDX_TRST].gpio_num,
+		srst,
+		(int)adapter_gpio_config[ADAPTER_GPIO_IDX_SRST].chip_num,
+		(int)adapter_gpio_config[ADAPTER_GPIO_IDX_SRST].gpio_num);
 	return ERROR_OK;
 }
 
@@ -274,15 +275,15 @@ static int am335xgpio_swdio_read(void)
 	return get_gpio_value(&adapter_gpio_config[ADAPTER_GPIO_IDX_SWDIO]);
 }
 
-static int am335xgpio_blink(int on)
+static int am335xgpio_blink(bool on)
 {
 	if (is_gpio_config_valid(&adapter_gpio_config[ADAPTER_GPIO_IDX_LED]))
-		set_gpio_value(&adapter_gpio_config[ADAPTER_GPIO_IDX_LED], on);
+		set_gpio_value(&adapter_gpio_config[ADAPTER_GPIO_IDX_LED], on ? 1 : 0);
 
 	return ERROR_OK;
 }
 
-static struct bitbang_interface am335xgpio_bitbang = {
+static const struct bitbang_interface am335xgpio_bitbang = {
 	.read = am335xgpio_read,
 	.write = am335xgpio_write,
 	.swdio_read = am335xgpio_swdio_read,
@@ -348,8 +349,6 @@ static const struct command_registration am335xgpio_command_handlers[] = {
 	},
 	COMMAND_REGISTRATION_DONE
 };
-
-static const char * const am335xgpio_transports[] = { "jtag", "swd", NULL };
 
 static struct jtag_interface am335xgpio_interface = {
 	.supported = DEBUG_CAP_TMS_SEQ,
@@ -493,7 +492,8 @@ static int am335xgpio_quit(void)
 
 struct adapter_driver am335xgpio_adapter_driver = {
 	.name = "am335xgpio",
-	.transports = am335xgpio_transports,
+	.transport_ids = TRANSPORT_JTAG | TRANSPORT_SWD,
+	.transport_preferred_id = TRANSPORT_JTAG,
 	.commands = am335xgpio_command_handlers,
 
 	.init = am335xgpio_init,

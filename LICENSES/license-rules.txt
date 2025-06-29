@@ -173,7 +173,6 @@ OpenOCD, can be broken down into:
 
    File format examples::
 
-      Valid-License-Identifier: GPL-2.0
       Valid-License-Identifier: GPL-2.0-only
       Valid-License-Identifier: GPL-2.0-or-later
       SPDX-URL: https://spdx.org/licenses/GPL-2.0.html
@@ -182,15 +181,27 @@ OpenOCD, can be broken down into:
         tag/value pairs into a comment according to the placement
         guidelines in the licensing rules documentation.
         For 'GNU General Public License (GPL) version 2 only' use:
-          SPDX-License-Identifier: GPL-2.0
-        or
           SPDX-License-Identifier: GPL-2.0-only
         For 'GNU General Public License (GPL) version 2 or any later version' use:
           SPDX-License-Identifier: GPL-2.0-or-later
       License-Text:
         Full license text
 
-2. Exceptions:
+2. Dual Licensing Only:
+
+   These licenses should only be used to dual license code with another
+   license in addition to a preferred license.  These licenses are available
+   from the directory::
+
+      LICENSES/dual/
+
+   in the OpenOCD source tree.
+
+   The files in this directory contain the full license text and
+   `Metatags`_.  The file names are identical to the SPDX license
+   identifier which shall be used for the license in source files.
+
+3. Exceptions:
 
    Some licenses can be amended with exceptions which grant certain rights
    which the original license does not.  These exceptions are available
@@ -247,7 +258,7 @@ OpenOCD, can be broken down into:
       License-Text:
         Full license text
 
-3. Stand-alone licenses:
+4. Stand-alone licenses:
 
    These licenses should only be used for stand-alone applications that are
    distributed with OpenOCD but are not included in the OpenOCD binary.

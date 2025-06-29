@@ -16,6 +16,7 @@
 #include "minidriver.h"
 #include "interface.h"
 #include "interfaces.h"
+#include <helper/bits.h>
 #include <transport/transport.h>
 
 /**
@@ -24,7 +25,6 @@
  */
 
 struct adapter_driver *adapter_driver;
-const char * const jtag_only[] = { "jtag", NULL };
 
 enum adapter_clk_mode {
 	CLOCK_MODE_UNSELECTED = 0,
@@ -66,6 +66,8 @@ static const struct gpio_map {
 	[ADAPTER_GPIO_IDX_LED] = { "led", ADAPTER_GPIO_DIRECTION_OUTPUT, true, true, },
 };
 
+static int adapter_config_khz(unsigned int khz);
+
 bool is_adapter_initialized(void)
 {
 	return adapter_config.adapter_initialized;
@@ -94,8 +96,9 @@ static void adapter_driver_gpios_init(void)
 		return;
 
 	for (int i = 0; i < ADAPTER_GPIO_IDX_NUM; ++i) {
-		adapter_config.gpios[i].gpio_num = -1;
-		adapter_config.gpios[i].chip_num = -1;
+		/* Use ADAPTER_GPIO_NOT_SET as the sentinel 'unset' value. */
+		adapter_config.gpios[i].gpio_num = ADAPTER_GPIO_NOT_SET;
+		adapter_config.gpios[i].chip_num = ADAPTER_GPIO_NOT_SET;
 		if (gpio_map[i].direction == ADAPTER_GPIO_DIRECTION_INPUT)
 			adapter_config.gpios[i].init_state = ADAPTER_GPIO_INIT_STATE_INPUT;
 	}
@@ -184,7 +187,6 @@ int adapter_init(struct command_context *cmd_ctx)
 int adapter_quit(void)
 {
 	if (is_adapter_initialized() && adapter_driver->quit) {
-		/* close the JTAG interface */
 		int result = adapter_driver->quit();
 		if (result != ERROR_OK)
 			LOG_ERROR("failed: %d", result);
@@ -244,7 +246,8 @@ static int adapter_set_speed(int speed)
 	return is_adapter_initialized() ? adapter_driver->speed(speed) : ERROR_OK;
 }
 
-int adapter_config_khz(unsigned int khz)
+/** Attempt to configure the adapter for the specified kHz. */
+static int adapter_config_khz(unsigned int khz)
 {
 	LOG_DEBUG("handle adapter khz");
 	adapter_config.clock_mode = CLOCK_MODE_KHZ;
@@ -376,7 +379,7 @@ done:
 
 COMMAND_HANDLER(handle_adapter_name)
 {
-	/* return the name of the interface */
+	/* return the name of the adapter driver */
 	/* TCL code might need to know the exact type... */
 	/* FUTURE: we allow this as a means to "set" the interface. */
 
@@ -388,54 +391,52 @@ COMMAND_HANDLER(handle_adapter_name)
 	return ERROR_OK;
 }
 
-COMMAND_HANDLER(adapter_transports_command)
+COMMAND_HANDLER(dump_adapter_driver_list)
 {
-	char **transports;
-	int retval;
-
-	retval = CALL_COMMAND_HANDLER(transport_list_parse, &transports);
-	if (retval != ERROR_OK)
-		return retval;
-
-	retval = allow_transports(CMD_CTX, (const char **)transports);
-
-	if (retval != ERROR_OK) {
-		for (unsigned i = 0; transports[i]; i++)
-			free(transports[i]);
-		free(transports);
+	int max_len = 0;
+	for (unsigned int i = 0; adapter_drivers[i]; i++) {
+		int len = strlen(adapter_drivers[i]->name);
+		if (max_len < len)
+			max_len = len;
 	}
-	return retval;
+
+	for (unsigned int i = 0; adapter_drivers[i]; i++) {
+		const char *name = adapter_drivers[i]->name;
+		unsigned int transport_ids = adapter_drivers[i]->transport_ids;
+
+		command_print_sameline(CMD, "%-*s {", max_len, name);
+		for (unsigned int j = BIT(0); j & TRANSPORT_VALID_MASK; j <<= 1)
+			if (j & transport_ids)
+				command_print_sameline(CMD, " %s", transport_name(j));
+		command_print(CMD, " }");
+	}
+
+	return ERROR_OK;
 }
 
 COMMAND_HANDLER(handle_adapter_list_command)
 {
-	if (strcmp(CMD_NAME, "list") == 0 && CMD_ARGC > 0)
+	if (CMD_ARGC)
 		return ERROR_COMMAND_SYNTAX_ERROR;
 
-	command_print(CMD, "The following debug adapters are available:");
-	for (unsigned i = 0; adapter_drivers[i]; i++) {
-		const char *name = adapter_drivers[i]->name;
-		command_print(CMD, "%u: %s", i + 1, name);
-	}
-
-	return ERROR_OK;
+	return CALL_COMMAND_HANDLER(dump_adapter_driver_list);
 }
 
 COMMAND_HANDLER(handle_adapter_driver_command)
 {
 	int retval;
 
-	/* check whether the interface is already configured */
+	/* check whether the adapter driver is already configured */
 	if (adapter_driver) {
-		LOG_WARNING("Interface already configured, ignoring");
+		LOG_WARNING("Adapter driver already configured, ignoring");
 		return ERROR_OK;
 	}
 
-	/* interface name is a mandatory argument */
-	if (CMD_ARGC != 1 || CMD_ARGV[0][0] == '\0')
+	/* adapter driver name is a mandatory argument */
+	if (CMD_ARGC != 1)
 		return ERROR_COMMAND_SYNTAX_ERROR;
 
-	for (unsigned i = 0; adapter_drivers[i]; i++) {
+	for (unsigned int i = 0; adapter_drivers[i]; i++) {
 		if (strcmp(CMD_ARGV[0], adapter_drivers[i]->name) != 0)
 			continue;
 
@@ -447,15 +448,17 @@ COMMAND_HANDLER(handle_adapter_driver_command)
 
 		adapter_driver = adapter_drivers[i];
 
-		return allow_transports(CMD_CTX, adapter_driver->transports);
+		return allow_transports(CMD_CTX, adapter_driver->transport_ids,
+			adapter_driver->transport_preferred_id);
 	}
 
-	/* no valid interface was found (i.e. the configuration option,
-	 * didn't match one of the compiled-in interfaces
+	/* no valid adapter driver was found (i.e. the configuration option,
+	 * didn't match one of the compiled-in drivers
 	 */
-	LOG_ERROR("The specified debug interface was not found (%s)",
+	LOG_ERROR("The specified adapter driver was not found (%s)",
 				CMD_ARGV[0]);
-	CALL_COMMAND_HANDLER(handle_adapter_list_command);
+	command_print(CMD, "The following adapter drivers are available:");
+	CALL_COMMAND_HANDLER(dump_adapter_driver_list);
 	return ERROR_JTAG_INVALID_INTERFACE;
 }
 
@@ -683,7 +686,7 @@ COMMAND_HANDLER(handle_adapter_srst_delay_command)
 	if (CMD_ARGC > 1)
 		return ERROR_COMMAND_SYNTAX_ERROR;
 	if (CMD_ARGC == 1) {
-		unsigned delay;
+		unsigned int delay;
 		COMMAND_PARSE_NUMBER(uint, CMD_ARGV[0], delay);
 
 		jtag_set_nsrst_delay(delay);
@@ -697,7 +700,7 @@ COMMAND_HANDLER(handle_adapter_srst_pulse_width_command)
 	if (CMD_ARGC > 1)
 		return ERROR_COMMAND_SYNTAX_ERROR;
 	if (CMD_ARGC == 1) {
-		unsigned width;
+		unsigned int width;
 		COMMAND_PARSE_NUMBER(uint, CMD_ARGV[0], width);
 
 		jtag_set_nsrst_assert_width(width);
@@ -713,7 +716,7 @@ COMMAND_HANDLER(handle_adapter_speed_command)
 
 	int retval = ERROR_OK;
 	if (CMD_ARGC == 1) {
-		unsigned khz = 0;
+		unsigned int khz = 0;
 		COMMAND_PARSE_NUMBER(uint, CMD_ARGV[0], khz);
 
 		retval = adapter_config_khz(khz);
@@ -848,6 +851,11 @@ static COMMAND_HELPER(helper_adapter_gpio_print_config, enum adapter_gpio_config
 	const char *pull = "";
 	const char *init_state = "";
 
+	if (gpio_config->gpio_num == ADAPTER_GPIO_NOT_SET) {
+		command_print(CMD, "adapter gpio %s: not configured", gpio_map[gpio_idx].name);
+		return ERROR_OK;
+	}
+
 	switch (gpio_map[gpio_idx].direction) {
 	case ADAPTER_GPIO_DIRECTION_INPUT:
 		dir = "input";
@@ -900,8 +908,8 @@ static COMMAND_HELPER(helper_adapter_gpio_print_config, enum adapter_gpio_config
 		}
 	}
 
-	command_print(CMD, "adapter gpio %s (%s): num %d, chip %d, active-%s%s%s%s",
-		gpio_map[gpio_idx].name, dir, gpio_config->gpio_num, gpio_config->chip_num, active_state,
+	command_print(CMD, "adapter gpio %s (%s): num %u, chip %d, active-%s%s%s%s",
+		gpio_map[gpio_idx].name, dir, gpio_config->gpio_num, (int)gpio_config->chip_num, active_state,
 		drive, pull, init_state);
 
 	return ERROR_OK;
@@ -942,9 +950,7 @@ COMMAND_HANDLER(adapter_gpio_config_handler)
 		LOG_DEBUG("Processing %s", CMD_ARGV[i]);
 
 		if (isdigit(*CMD_ARGV[i])) {
-			int gpio_num; /* Use a meaningful output parameter for more helpful error messages */
-			COMMAND_PARSE_NUMBER(int, CMD_ARGV[i], gpio_num);
-			gpio_config->gpio_num = gpio_num;
+			COMMAND_PARSE_NUMBER(uint, CMD_ARGV[i], gpio_config->gpio_num);
 			++i;
 			continue;
 		}
@@ -955,9 +961,7 @@ COMMAND_HANDLER(adapter_gpio_config_handler)
 				return ERROR_FAIL;
 			}
 			LOG_DEBUG("-chip arg is %s", CMD_ARGV[i + 1]);
-			int chip_num; /* Use a meaningful output parameter for more helpful error messages */
-			COMMAND_PARSE_NUMBER(int, CMD_ARGV[i + 1], chip_num);
-			gpio_config->chip_num = chip_num;
+			COMMAND_PARSE_NUMBER(uint, CMD_ARGV[i + 1], gpio_config->chip_num);
 			i += 2;
 			continue;
 		}
@@ -1131,13 +1135,6 @@ static const struct command_registration adapter_command_handlers[] = {
 		.help = "srst adapter command group",
 		.usage = "",
 		.chain = adapter_srst_command_handlers,
-	},
-	{
-		.name = "transports",
-		.handler = adapter_transports_command,
-		.mode = COMMAND_CONFIG,
-		.help = "Declare transports the adapter supports.",
-		.usage = "transport ...",
 	},
 	{
 		.name = "usb",

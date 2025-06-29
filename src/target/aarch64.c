@@ -93,6 +93,7 @@ static int aarch64_restore_system_control_reg(struct target *target)
 		case ARM_MODE_HYP:
 		case ARM_MODE_UND:
 		case ARM_MODE_SYS:
+		case ARM_MODE_MON:
 			instr = ARMV4_5_MCR(15, 0, 0, 1, 0, 0);
 			break;
 
@@ -172,6 +173,7 @@ static int aarch64_mmu_modify(struct target *target, int enable)
 	case ARM_MODE_HYP:
 	case ARM_MODE_UND:
 	case ARM_MODE_SYS:
+	case ARM_MODE_MON:
 		instr = ARMV4_5_MCR(15, 0, 0, 1, 0, 0);
 		break;
 
@@ -189,6 +191,20 @@ static int aarch64_mmu_modify(struct target *target, int enable)
 		armv8_dpm_modeswitch(&armv8->dpm, ARM_MODE_ANY);
 
 	return retval;
+}
+
+static int aarch64_read_prsr(struct target *target, uint32_t *prsr)
+{
+	struct armv8_common *armv8 = target_to_armv8(target);
+	int retval;
+
+	retval = mem_ap_read_atomic_u32(armv8->debug_ap,
+			armv8->debug_base + CPUV8_DBG_PRSR, prsr);
+	if (retval != ERROR_OK)
+		return retval;
+
+	armv8->sticky_reset |= *prsr & PRSR_SR;
+	return ERROR_OK;
 }
 
 /*
@@ -211,8 +227,7 @@ static int aarch64_init_debug_access(struct target *target)
 
 	/* Clear Sticky Power Down status Bit in PRSR to enable access to
 	   the registers in the Core Power Domain */
-	retval = mem_ap_read_atomic_u32(armv8->debug_ap,
-			armv8->debug_base + CPUV8_DBG_PRSR, &dummy);
+	retval = aarch64_read_prsr(target, &dummy);
 	if (retval != ERROR_OK)
 		return retval;
 
@@ -279,12 +294,10 @@ static int aarch64_set_dscr_bits(struct target *target, unsigned long bit_mask, 
 static int aarch64_check_state_one(struct target *target,
 		uint32_t mask, uint32_t val, int *p_result, uint32_t *p_prsr)
 {
-	struct armv8_common *armv8 = target_to_armv8(target);
 	uint32_t prsr;
 	int retval;
 
-	retval = mem_ap_read_atomic_u32(armv8->debug_ap,
-			armv8->debug_base + CPUV8_DBG_PRSR, &prsr);
+	retval = aarch64_read_prsr(target, &prsr);
 	if (retval != ERROR_OK)
 		return retval;
 
@@ -504,16 +517,28 @@ static int update_halt_gdb(struct target *target, enum target_debug_reason debug
 
 static int aarch64_poll(struct target *target)
 {
+	struct armv8_common *armv8 = target_to_armv8(target);
 	enum target_state prev_target_state;
 	int retval = ERROR_OK;
-	int halted;
+	uint32_t prsr;
 
-	retval = aarch64_check_state_one(target,
-				PRSR_HALT, PRSR_HALT, &halted, NULL);
+	retval = aarch64_read_prsr(target, &prsr);
 	if (retval != ERROR_OK)
 		return retval;
 
-	if (halted) {
+	if (armv8->sticky_reset) {
+		armv8->sticky_reset = false;
+		if (target->state != TARGET_RESET) {
+			target->state = TARGET_RESET;
+			LOG_TARGET_INFO(target, "external reset detected");
+			if (armv8->arm.core_cache) {
+				register_cache_invalidate(armv8->arm.core_cache);
+				register_cache_invalidate(armv8->arm.core_cache->next);
+			}
+		}
+	}
+
+	if (prsr & PRSR_HALT) {
 		prev_target_state = target->state;
 		if (prev_target_state != TARGET_HALTED) {
 			enum target_debug_reason debug_reason = target->debug_reason;
@@ -544,8 +569,11 @@ static int aarch64_poll(struct target *target)
 				break;
 			}
 		}
-	} else
+	} else if (prsr & PRSR_RESET) {
+		target->state = TARGET_RESET;
+	} else {
 		target->state = TARGET_RUNNING;
+	}
 
 	return retval;
 }
@@ -561,8 +589,8 @@ static int aarch64_halt(struct target *target)
 	return aarch64_halt_one(target, HALT_SYNC);
 }
 
-static int aarch64_restore_one(struct target *target, int current,
-	uint64_t *address, int handle_breakpoints, int debug_execution)
+static int aarch64_restore_one(struct target *target, bool current,
+	uint64_t *address, bool handle_breakpoints, bool debug_execution)
 {
 	struct armv8_common *armv8 = target_to_armv8(target);
 	struct arm *arm = &armv8->arm;
@@ -574,7 +602,7 @@ static int aarch64_restore_one(struct target *target, int current,
 	if (!debug_execution)
 		target_free_all_working_areas(target);
 
-	/* current = 1: continue on current pc, otherwise continue at <address> */
+	/* current = true: continue on current pc, otherwise continue at <address> */
 	resume_pc = buf_get_u64(arm->pc->value, 0, 64);
 	if (!current)
 		resume_pc = *address;
@@ -661,8 +689,7 @@ static int aarch64_prepare_restart_one(struct target *target)
 
 	if (retval == ERROR_OK) {
 		/* clear sticky bits in PRSR, SDR is now 0 */
-		retval = mem_ap_read_atomic_u32(armv8->debug_ap,
-				armv8->debug_base + CPUV8_DBG_PRSR, &tmp);
+		retval = aarch64_read_prsr(target, &tmp);
 	}
 
 	return retval;
@@ -726,7 +753,8 @@ static int aarch64_restart_one(struct target *target, enum restart_mode mode)
 /*
  * prepare all but the current target for restart
  */
-static int aarch64_prep_restart_smp(struct target *target, int handle_breakpoints, struct target **p_first)
+static int aarch64_prep_restart_smp(struct target *target,
+		bool handle_breakpoints, struct target **p_first)
 {
 	int retval = ERROR_OK;
 	struct target_list *head;
@@ -745,7 +773,8 @@ static int aarch64_prep_restart_smp(struct target *target, int handle_breakpoint
 			continue;
 
 		/*  resume at current address, not in step mode */
-		retval = aarch64_restore_one(curr, 1, &address, handle_breakpoints, 0);
+		retval = aarch64_restore_one(curr, true, &address, handle_breakpoints,
+			false);
 		if (retval == ERROR_OK)
 			retval = aarch64_prepare_restart_one(curr);
 		if (retval != ERROR_OK) {
@@ -772,7 +801,7 @@ static int aarch64_step_restart_smp(struct target *target)
 
 	LOG_DEBUG("%s", target_name(target));
 
-	retval = aarch64_prep_restart_smp(target, 0, &first);
+	retval = aarch64_prep_restart_smp(target, false, &first);
 	if (retval != ERROR_OK)
 		return retval;
 
@@ -837,8 +866,8 @@ static int aarch64_step_restart_smp(struct target *target)
 	return retval;
 }
 
-static int aarch64_resume(struct target *target, int current,
-	target_addr_t address, int handle_breakpoints, int debug_execution)
+static int aarch64_resume(struct target *target, bool current,
+	target_addr_t address, bool handle_breakpoints, bool debug_execution)
 {
 	int retval = 0;
 	uint64_t addr = address;
@@ -1043,6 +1072,7 @@ static int aarch64_post_debug_entry(struct target *target)
 	case ARM_MODE_HYP:
 	case ARM_MODE_UND:
 	case ARM_MODE_SYS:
+	case ARM_MODE_MON:
 		instr = ARMV4_5_MRC(15, 0, 0, 1, 0, 0);
 		break;
 
@@ -1085,8 +1115,8 @@ static int aarch64_post_debug_entry(struct target *target)
 /*
  * single-step a target
  */
-static int aarch64_step(struct target *target, int current, target_addr_t address,
-	int handle_breakpoints)
+static int aarch64_step(struct target *target, bool current, target_addr_t address,
+	bool handle_breakpoints)
 {
 	struct armv8_common *armv8 = target_to_armv8(target);
 	struct aarch64_common *aarch64 = target_to_aarch64(target);
@@ -1119,7 +1149,7 @@ static int aarch64_step(struct target *target, int current, target_addr_t addres
 	if (retval != ERROR_OK)
 		return retval;
 
-	if (target->smp && (current == 1)) {
+	if (target->smp && current) {
 		/*
 		 * isolate current target so that it doesn't get resumed
 		 * together with the others
@@ -1136,7 +1166,7 @@ static int aarch64_step(struct target *target, int current, target_addr_t addres
 	}
 
 	/* all other targets running, restore and restart the current target */
-	retval = aarch64_restore_one(target, current, &address, 0, 0);
+	retval = aarch64_restore_one(target, current, &address, false, false);
 	if (retval == ERROR_OK)
 		retval = aarch64_restart_one(target, RESTART_LAZY);
 
@@ -1980,7 +2010,7 @@ static int aarch64_assert_reset(struct target *target)
 	}
 
 	/* registers are now invalid */
-	if (target_was_examined(target)) {
+	if (armv8->arm.core_cache) {
 		register_cache_invalidate(armv8->arm.core_cache);
 		register_cache_invalidate(armv8->arm.core_cache->next);
 	}
@@ -2784,7 +2814,7 @@ static int aarch64_init_arch_info(struct target *target,
 	return ERROR_OK;
 }
 
-static int armv8r_target_create(struct target *target, Jim_Interp *interp)
+static int armv8r_target_create(struct target *target)
 {
 	struct aarch64_private_config *pc = target->private_config;
 	struct aarch64_common *aarch64;
@@ -2803,7 +2833,7 @@ static int armv8r_target_create(struct target *target, Jim_Interp *interp)
 	return aarch64_init_arch_info(target, aarch64, pc->adiv5_config.dap);
 }
 
-static int aarch64_target_create(struct target *target, Jim_Interp *interp)
+static int aarch64_target_create(struct target *target)
 {
 	struct aarch64_private_config *pc = target->private_config;
 	struct aarch64_common *aarch64;
@@ -2827,6 +2857,14 @@ static void aarch64_deinit_target(struct target *target)
 	struct aarch64_common *aarch64 = target_to_aarch64(target);
 	struct armv8_common *armv8 = &aarch64->armv8_common;
 	struct arm_dpm *dpm = &armv8->dpm;
+	uint64_t address;
+
+	if (target->state == TARGET_HALTED) {
+		// Restore the previous state of the target (gp registers, MMU, caches, etc)
+		int retval = aarch64_restore_one(target, true, &address, false, false);
+		if (retval != ERROR_OK)
+			LOG_TARGET_ERROR(target, "Failed to restore target state");
+	}
 
 	if (armv8->debug_ap)
 		dap_put_ap(armv8->debug_ap);
@@ -2880,9 +2918,9 @@ static int aarch64_jim_configure(struct target *target, struct jim_getopt_info *
 
 	pc = (struct aarch64_private_config *)target->private_config;
 	if (!pc) {
-			pc = calloc(1, sizeof(struct aarch64_private_config));
-			pc->adiv5_config.ap_num = DP_APSEL_INVALID;
-			target->private_config = pc;
+		pc = calloc(1, sizeof(struct aarch64_private_config));
+		pc->adiv5_config.ap_num = DP_APSEL_INVALID;
+		target->private_config = pc;
 	}
 
 	/*
@@ -2891,13 +2929,8 @@ static int aarch64_jim_configure(struct target *target, struct jim_getopt_info *
 	 * options, JIM_OK if it correctly parsed the topmost option
 	 * and JIM_ERR if an error occurred during parameter evaluation.
 	 * For JIM_CONTINUE, we check our own params.
-	 *
-	 * adiv5_jim_configure() assumes 'private_config' to point to
-	 * 'struct adiv5_private_config'. Override 'private_config'!
 	 */
-	target->private_config = &pc->adiv5_config;
-	e = adiv5_jim_configure(target, goi);
-	target->private_config = pc;
+	e = adiv5_jim_configure_ext(target, goi, &pc->adiv5_config, ADI_CONFIGURE_DAP_COMPULSORY);
 	if (e != JIM_CONTINUE)
 		return e;
 
@@ -2917,7 +2950,7 @@ static int aarch64_jim_configure(struct target *target, struct jim_getopt_info *
 
 		switch (n->value) {
 		case CFG_CTI: {
-			if (goi->isconfigure) {
+			if (goi->is_configure) {
 				Jim_Obj *o_cti;
 				struct arm_cti *cti;
 				e = jim_getopt_obj(goi, &o_cti);

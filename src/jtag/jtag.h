@@ -34,7 +34,7 @@
  * Fix those drivers to map as appropriate ... then pick some
  * sane set of numbers here (where 0/uninitialized == INVALID).
  */
-typedef enum tap_state {
+enum tap_state {
 	TAP_INVALID = -1,
 
 	/* Proper ARM recommended numbers */
@@ -54,7 +54,7 @@ typedef enum tap_state {
 	TAP_IRUPDATE = 0xd,
 	TAP_IRCAPTURE = 0xe,
 	TAP_RESET = 0x0f,
-} tap_state_t;
+};
 
 /**
  * Defines arguments for reset functions
@@ -68,13 +68,13 @@ typedef enum tap_state {
  * Function tap_state_name
  * Returns a string suitable for display representing the JTAG tap_state
  */
-const char *tap_state_name(tap_state_t state);
+const char *tap_state_name(enum tap_state state);
 
 /** Provides user-friendly name lookup of TAP states. */
-tap_state_t tap_state_by_name(const char *name);
+enum tap_state tap_state_by_name(const char *name);
 
 /** The current TAP state of the pending JTAG command queue. */
-extern tap_state_t cmd_queue_cur_state;
+extern enum tap_state cmd_queue_cur_state;
 
 /**
  * This structure defines a single scan field in the scan. It provides
@@ -86,7 +86,7 @@ extern tap_state_t cmd_queue_cur_state;
  */
 struct scan_field {
 	/** The number of bits this field specifies */
-	int num_bits;
+	unsigned int num_bits;
 	/** A pointer to value to be scanned into the device */
 	const uint8_t *out_value;
 	/** A pointer to a 32-bit memory location for data scanned out */
@@ -102,12 +102,12 @@ struct jtag_tap {
 	char *chip;
 	char *tapname;
 	char *dotted_name;
-	int abs_chain_position;
+	unsigned int abs_chain_position;
 	/** Is this TAP disabled after JTAG reset? */
 	bool disabled_after_reset;
 	/** Is this TAP currently enabled? */
 	bool enabled;
-	int ir_length; /**< size of instruction register */
+	unsigned int ir_length; /**< size of instruction register */
 	uint32_t ir_capture_value;
 	uint8_t *expected; /**< Capture-IR expected value */
 	uint32_t ir_capture_mask;
@@ -115,7 +115,7 @@ struct jtag_tap {
 	uint32_t idcode; /**< device identification code */
 	/** not all devices have idcode,
 	 * we'll discover this during chain examination */
-	bool hasidcode;
+	bool has_idcode;
 
 	/** Array of expected identification codes */
 	uint32_t *expected_ids;
@@ -131,7 +131,10 @@ struct jtag_tap {
 	/** current instruction */
 	uint8_t *cur_instr;
 	/** Bypass register selected */
-	int bypass;
+	bool bypass;
+
+	/** Bypass instruction value */
+	uint64_t ir_bypass_value;
 
 	struct jtag_tap_event_action *event_action;
 
@@ -147,10 +150,9 @@ struct jtag_tap *jtag_all_taps(void);
 const char *jtag_tap_name(const struct jtag_tap *tap);
 struct jtag_tap *jtag_tap_by_string(const char *dotted_name);
 struct jtag_tap *jtag_tap_by_jim_obj(Jim_Interp *interp, Jim_Obj *obj);
-struct jtag_tap *jtag_tap_by_position(unsigned abs_position);
+struct jtag_tap *jtag_tap_by_position(unsigned int abs_position);
 struct jtag_tap *jtag_tap_next_enabled(struct jtag_tap *p);
-unsigned jtag_tap_count_enabled(void);
-unsigned jtag_tap_count(void);
+unsigned int jtag_tap_count_enabled(void);
 
 /*
  * - TRST_ASSERTED triggers two sets of callbacks, after operations to
@@ -226,17 +228,17 @@ enum reset_types {
 enum reset_types jtag_get_reset_config(void);
 void jtag_set_reset_config(enum reset_types type);
 
-void jtag_set_nsrst_delay(unsigned delay);
-unsigned jtag_get_nsrst_delay(void);
+void jtag_set_nsrst_delay(unsigned int delay);
+unsigned int jtag_get_nsrst_delay(void);
 
-void jtag_set_ntrst_delay(unsigned delay);
-unsigned jtag_get_ntrst_delay(void);
+void jtag_set_ntrst_delay(unsigned int delay);
+unsigned int jtag_get_ntrst_delay(void);
 
-void jtag_set_nsrst_assert_width(unsigned delay);
-unsigned jtag_get_nsrst_assert_width(void);
+void jtag_set_nsrst_assert_width(unsigned int delay);
+unsigned int jtag_get_nsrst_assert_width(void);
 
-void jtag_set_ntrst_assert_width(unsigned delay);
-unsigned jtag_get_ntrst_assert_width(void);
+void jtag_set_ntrst_assert_width(unsigned int delay);
+unsigned int jtag_get_ntrst_assert_width(void);
 
 /** @returns The current state of TRST. */
 int jtag_get_trst(void);
@@ -293,20 +295,20 @@ int jtag_init_inner(struct command_context *cmd_ctx);
  *
  */
 void jtag_add_ir_scan(struct jtag_tap *tap,
-		struct scan_field *fields, tap_state_t endstate);
+		struct scan_field *fields, enum tap_state endstate);
 /**
  * The same as jtag_add_ir_scan except no verification is performed out
  * the output values.
  */
 void jtag_add_ir_scan_noverify(struct jtag_tap *tap,
-		const struct scan_field *fields, tap_state_t state);
+		const struct scan_field *fields, enum tap_state state);
 /**
  * Scan out the bits in ir scan mode.
  *
  * If in_bits == NULL, discard incoming bits.
  */
 void jtag_add_plain_ir_scan(int num_bits, const uint8_t *out_bits, uint8_t *in_bits,
-		tap_state_t endstate);
+		enum tap_state endstate);
 
 /**
  * Generate a DR SCAN using the fields passed to the function.
@@ -315,17 +317,17 @@ void jtag_add_plain_ir_scan(int num_bits, const uint8_t *out_bits, uint8_t *in_b
  * 1-bit field.  The bypass status of TAPs is set by jtag_add_ir_scan().
  */
 void jtag_add_dr_scan(struct jtag_tap *tap, int num_fields,
-		const struct scan_field *fields, tap_state_t endstate);
+		const struct scan_field *fields, enum tap_state endstate);
 /** A version of jtag_add_dr_scan() that uses the check_value/mask fields */
 void jtag_add_dr_scan_check(struct jtag_tap *tap, int num_fields,
-		struct scan_field *fields, tap_state_t endstate);
+		struct scan_field *fields, enum tap_state endstate);
 /**
  * Scan out the bits in ir scan mode.
  *
  * If in_bits == NULL, discard incoming bits.
  */
 void jtag_add_plain_dr_scan(int num_bits,
-		const uint8_t *out_bits, uint8_t *in_bits, tap_state_t endstate);
+		const uint8_t *out_bits, uint8_t *in_bits, enum tap_state endstate);
 
 /**
  * Defines the type of data passed to the jtag_callback_t interface.
@@ -433,7 +435,7 @@ void jtag_add_tlr(void);
  *   - ERROR_JTAG_TRANSITION_INVALID -- The path includes invalid
  *     state transitions.
  */
-void jtag_add_pathmove(int num_states, const tap_state_t *path);
+void jtag_add_pathmove(unsigned int num_states, const enum tap_state *path);
 
 /**
  * jtag_add_statemove() moves from the current state to @a goal_state.
@@ -444,7 +446,7 @@ void jtag_add_pathmove(int num_states, const tap_state_t *path);
  * Moves from the current state to the goal \a state.
  * Both states must be stable.
  */
-int jtag_add_statemove(tap_state_t goal_state);
+int jtag_add_statemove(enum tap_state goal_state);
 
 /**
  * Goes to TAP_IDLE (if we're not already there), cycle
@@ -456,7 +458,7 @@ int jtag_add_statemove(tap_state_t goal_state);
  *	via TAP_IDLE.
  * @param endstate The final state.
  */
-void jtag_add_runtest(int num_cycles, tap_state_t endstate);
+void jtag_add_runtest(unsigned int num_cycles, enum tap_state endstate);
 
 /**
  * A reset of the TAP state machine can be requested.
@@ -485,14 +487,14 @@ void jtag_add_reset(int req_tlr_or_trst, int srst);
 
 void jtag_add_sleep(uint32_t us);
 
-int jtag_add_tms_seq(unsigned nbits, const uint8_t *seq, enum tap_state t);
+int jtag_add_tms_seq(unsigned int nbits, const uint8_t *seq, enum tap_state t);
 
 /**
  * Function jtag_add_clocks
  * first checks that the state in which the clocks are to be issued is
  * stable, then queues up num_cycles clocks for transmission.
  */
-void jtag_add_clocks(int num_cycles);
+void jtag_add_clocks(unsigned int num_cycles);
 
 /**
  * For software FIFO implementations, the queued commands can be executed
@@ -520,7 +522,7 @@ int jtag_execute_queue(void);
 void jtag_execute_queue_noclear(void);
 
 /** @returns the number of times the scan queue has been flushed */
-int jtag_get_flush_queue_count(void);
+unsigned int jtag_get_flush_queue_count(void);
 
 /** Report Tcl event to all TAPs */
 void jtag_notify_event(enum jtag_event);
@@ -565,11 +567,6 @@ void jtag_sleep(uint32_t us);
  * called with a non-zero error code.
  */
 void jtag_set_error(int error);
-/**
- * Resets jtag_error to ERROR_OK, returning its previous value.
- * @returns The previous value of @c jtag_error.
- */
-int jtag_error_clear(void);
 
 /**
  * Return true if it's safe for a background polling task to access the

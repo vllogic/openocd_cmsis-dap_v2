@@ -40,7 +40,6 @@
 
 /* START_DEPRECATED_TPIU */
 #include <target/cortex_m.h>
-#include <target/target_type.h>
 #define MSG "DEPRECATED \'tpiu config\' command: "
 /* END_DEPRECATED_TPIU */
 
@@ -127,7 +126,7 @@ struct arm_tpiu_swo_priv_connection {
 	struct arm_tpiu_swo_object *obj;
 };
 
-static LIST_HEAD(all_tpiu_swo);
+static OOCD_LIST_HEAD(all_tpiu_swo);
 
 #define ARM_TPIU_SWO_TRACE_BUF_SIZE	4096
 
@@ -153,7 +152,7 @@ static int arm_tpiu_swo_poll_trace(void *priv)
 		}
 	}
 
-	if (obj->out_filename && obj->out_filename[0] == ':')
+	if (obj->out_filename[0] == ':')
 		list_for_each_entry(c, &obj->connections, lh)
 			if (connection_write(c->connection, buf, size) != (int)size)
 				LOG_ERROR("Error writing to connection"); /* FIXME: which connection? */
@@ -161,7 +160,7 @@ static int arm_tpiu_swo_poll_trace(void *priv)
 	return ERROR_OK;
 }
 
-static void arm_tpiu_swo_handle_event(struct arm_tpiu_swo_object *obj, enum arm_tpiu_swo_event event)
+static int arm_tpiu_swo_handle_event(struct arm_tpiu_swo_object *obj, enum arm_tpiu_swo_event event)
 {
 	for (struct arm_tpiu_swo_event_action *ea = obj->event_action; ea; ea = ea->next) {
 		if (ea->event != event)
@@ -182,7 +181,7 @@ static void arm_tpiu_swo_handle_event(struct arm_tpiu_swo_object *obj, enum arm_
 		if (retval == JIM_RETURN)
 			retval = ea->interp->returnCode;
 		if (retval == JIM_OK || retval == ERROR_COMMAND_CLOSE_CONNECTION)
-			return;
+			return ERROR_OK;
 
 		Jim_MakeErrorMessage(ea->interp);
 		LOG_USER("Error executing event %s on TPIU/SWO %s:\n%s",
@@ -191,8 +190,10 @@ static void arm_tpiu_swo_handle_event(struct arm_tpiu_swo_object *obj, enum arm_
 			Jim_GetString(Jim_GetResult(ea->interp), NULL));
 		/* clean both error code and stacktrace before return */
 		Jim_Eval(ea->interp, "error \"\" \"\"");
-		return;
+		return ERROR_FAIL;
 	}
+
+	return ERROR_OK;
 }
 
 static void arm_tpiu_swo_close_output(struct arm_tpiu_swo_object *obj)
@@ -201,7 +202,7 @@ static void arm_tpiu_swo_close_output(struct arm_tpiu_swo_object *obj)
 		fclose(obj->file);
 		obj->file = NULL;
 	}
-	if (obj->out_filename && obj->out_filename[0] == ':')
+	if (obj->out_filename[0] == ':')
 		remove_service(TCP_SERVICE_NAME, &obj->out_filename[1]);
 }
 
@@ -357,7 +358,7 @@ static int arm_tpiu_swo_configure(struct jim_getopt_info *goi, struct arm_tpiu_s
 {
 	assert(obj);
 
-	if (goi->isconfigure && obj->enabled) {
+	if (goi->is_configure && obj->enabled) {
 		Jim_SetResultFormatted(goi->interp, "Cannot configure TPIU/SWO; %s is enabled!", obj->name);
 		return JIM_ERR;
 	}
@@ -381,7 +382,7 @@ static int arm_tpiu_swo_configure(struct jim_getopt_info *goi, struct arm_tpiu_s
 
 		switch (n->value) {
 		case CFG_PORT_WIDTH:
-			if (goi->isconfigure) {
+			if (goi->is_configure) {
 				jim_wide port_width;
 				e = jim_getopt_wide(goi, &port_width);
 				if (e != JIM_OK)
@@ -398,7 +399,7 @@ static int arm_tpiu_swo_configure(struct jim_getopt_info *goi, struct arm_tpiu_s
 			}
 			break;
 		case CFG_PROTOCOL:
-			if (goi->isconfigure) {
+			if (goi->is_configure) {
 				struct jim_nvp *p;
 				e = jim_getopt_nvp(goi, nvp_arm_tpiu_swo_protocol_opts, &p);
 				if (e != JIM_OK)
@@ -417,7 +418,7 @@ static int arm_tpiu_swo_configure(struct jim_getopt_info *goi, struct arm_tpiu_s
 			}
 			break;
 		case CFG_FORMATTER:
-			if (goi->isconfigure) {
+			if (goi->is_configure) {
 				struct jim_nvp *p;
 				e = jim_getopt_nvp(goi, nvp_arm_tpiu_swo_bool_opts, &p);
 				if (e != JIM_OK)
@@ -436,7 +437,7 @@ static int arm_tpiu_swo_configure(struct jim_getopt_info *goi, struct arm_tpiu_s
 			}
 			break;
 		case CFG_TRACECLKIN:
-			if (goi->isconfigure) {
+			if (goi->is_configure) {
 				jim_wide clk;
 				e = jim_getopt_wide(goi, &clk);
 				if (e != JIM_OK)
@@ -449,7 +450,7 @@ static int arm_tpiu_swo_configure(struct jim_getopt_info *goi, struct arm_tpiu_s
 			}
 			break;
 		case CFG_BITRATE:
-			if (goi->isconfigure) {
+			if (goi->is_configure) {
 				jim_wide clk;
 				e = jim_getopt_wide(goi, &clk);
 				if (e != JIM_OK)
@@ -462,7 +463,7 @@ static int arm_tpiu_swo_configure(struct jim_getopt_info *goi, struct arm_tpiu_s
 			}
 			break;
 		case CFG_OUTFILE:
-			if (goi->isconfigure) {
+			if (goi->is_configure) {
 				const char *s;
 				e = jim_getopt_string(goi, &s, NULL);
 				if (e != JIM_OK)
@@ -475,12 +476,13 @@ static int arm_tpiu_swo_configure(struct jim_getopt_info *goi, struct arm_tpiu_s
 						return JIM_ERR;
 					}
 				}
-				free(obj->out_filename);
-				obj->out_filename = strdup(s);
-				if (!obj->out_filename) {
+				char *out_filename = strdup(s);
+				if (!out_filename) {
 					LOG_ERROR("Out of memory");
 					return JIM_ERR;
 				}
+				free(obj->out_filename);
+				obj->out_filename = out_filename;
 			} else {
 				if (goi->argc)
 					goto err_no_params;
@@ -489,7 +491,7 @@ static int arm_tpiu_swo_configure(struct jim_getopt_info *goi, struct arm_tpiu_s
 			}
 			break;
 		case CFG_EVENT:
-			if (goi->isconfigure) {
+			if (goi->is_configure) {
 				if (goi->argc < 2) {
 					Jim_WrongNumArgs(goi->interp, goi->argc, goi->argv, "-event ?event-name? ?EVENT-BODY?");
 					return JIM_ERR;
@@ -519,7 +521,7 @@ static int arm_tpiu_swo_configure(struct jim_getopt_info *goi, struct arm_tpiu_s
 					ea = ea->next;
 				}
 
-				if (goi->isconfigure) {
+				if (goi->is_configure) {
 					if (!ea) {
 						ea = calloc(1, sizeof(*ea));
 						if (!ea) {
@@ -552,20 +554,28 @@ err_no_params:
 	return JIM_ERR;
 }
 
-static int jim_arm_tpiu_swo_configure(Jim_Interp *interp, int argc, Jim_Obj * const *argv)
+COMMAND_HANDLER(handle_arm_tpiu_swo_configure)
 {
-	struct command *c = jim_to_command(interp);
-	struct jim_getopt_info goi;
+	struct arm_tpiu_swo_object *obj = CMD_DATA;
 
-	jim_getopt_setup(&goi, interp, argc - 1, argv + 1);
-	goi.isconfigure = !strcmp(c->name, "configure");
-	if (goi.argc < 1) {
-		Jim_WrongNumArgs(goi.interp, goi.argc, goi.argv,
-			"missing: -option ...");
-		return JIM_ERR;
-	}
-	struct arm_tpiu_swo_object *obj = c->jim_handler_data;
-	return arm_tpiu_swo_configure(&goi, obj);
+	if (!CMD_ARGC)
+		return ERROR_COMMAND_SYNTAX_ERROR;
+
+	struct jim_getopt_info goi;
+	jim_getopt_setup(&goi, CMD_CTX->interp, CMD_ARGC, CMD_JIMTCL_ARGV);
+	goi.is_configure = !strcmp(CMD_NAME, "configure");
+
+	int e = arm_tpiu_swo_configure(&goi, obj);
+
+	int reslen;
+	const char *result = Jim_GetString(Jim_GetResult(CMD_CTX->interp), &reslen);
+	if (reslen > 0)
+		command_print(CMD, "%s", result);
+
+	if (e != JIM_OK)
+		return ERROR_FAIL;
+
+	return ERROR_OK;
 }
 
 static int wrap_write_u32(struct target *target, struct adiv5_ap *tpiu_ap,
@@ -625,16 +635,25 @@ COMMAND_HANDLER(handle_arm_tpiu_swo_enable)
 		return ERROR_FAIL;
 	}
 
-	if (obj->pin_protocol == TPIU_SPPR_PROTOCOL_MANCHESTER || obj->pin_protocol == TPIU_SPPR_PROTOCOL_UART)
-		if (!obj->swo_pin_freq)
+	const bool output_external = !strcmp(obj->out_filename, "external");
+
+	if (obj->pin_protocol == TPIU_SPPR_PROTOCOL_MANCHESTER || obj->pin_protocol == TPIU_SPPR_PROTOCOL_UART) {
+		if (!obj->swo_pin_freq) {
+			if (output_external) {
+				command_print(CMD, "SWO pin frequency required when using external capturing");
+				return ERROR_FAIL;
+			}
+
 			LOG_DEBUG("SWO pin frequency not set, will be autodetected by the adapter");
+		}
+	}
 
 	struct target *target = get_current_target(CMD_CTX);
 
 	/* START_DEPRECATED_TPIU */
 	if (obj->recheck_ap_cur_target) {
-		if (strcmp(target->type->name, "cortex_m") &&
-			strcmp(target->type->name, "hla_target")) {
+		if (strcmp(target_type_name(target), "cortex_m") &&
+			strcmp(target_type_name(target), "hla_target")) {
 			LOG_ERROR(MSG "Current target is not a Cortex-M nor a HLA");
 			return ERROR_FAIL;
 		}
@@ -664,7 +683,9 @@ COMMAND_HANDLER(handle_arm_tpiu_swo_enable)
 	}
 
 	/* trigger the event before any attempt to R/W in the TPIU/SWO */
-	arm_tpiu_swo_handle_event(obj, TPIU_SWO_EVENT_PRE_ENABLE);
+	retval = arm_tpiu_swo_handle_event(obj, TPIU_SWO_EVENT_PRE_ENABLE);
+	if (retval != ERROR_OK)
+		return retval;
 
 	retval = wrap_read_u32(target, obj->ap, obj->spot.base + TPIU_DEVID_OFFSET, &value);
 	if (retval != ERROR_OK) {
@@ -705,7 +726,7 @@ COMMAND_HANDLER(handle_arm_tpiu_swo_enable)
 	uint16_t prescaler = 1; /* dummy value */
 	unsigned int swo_pin_freq = obj->swo_pin_freq; /* could be replaced */
 
-	if (obj->out_filename && strcmp(obj->out_filename, "external") && obj->out_filename[0]) {
+	if (!output_external) {
 		if (obj->out_filename[0] == ':') {
 			struct arm_tpiu_swo_priv_connection *priv = malloc(sizeof(*priv));
 			if (!priv) {
@@ -790,7 +811,9 @@ COMMAND_HANDLER(handle_arm_tpiu_swo_enable)
 	if (retval != ERROR_OK)
 		goto error_exit;
 
-	arm_tpiu_swo_handle_event(obj, TPIU_SWO_EVENT_POST_ENABLE);
+	retval = arm_tpiu_swo_handle_event(obj, TPIU_SWO_EVENT_POST_ENABLE);
+	if (retval != ERROR_OK)
+		goto error_exit;
 
 	/* START_DEPRECATED_TPIU */
 	target_handle_event(target, TARGET_EVENT_TRACE_CONFIG);
@@ -857,14 +880,14 @@ static const struct command_registration arm_tpiu_swo_instance_command_handlers[
 	{
 		.name = "configure",
 		.mode = COMMAND_ANY,
-		.jim_handler = jim_arm_tpiu_swo_configure,
+		.handler = handle_arm_tpiu_swo_configure,
 		.help  = "configure a new TPIU/SWO for use",
 		.usage = "[attribute value ...]",
 	},
 	{
 		.name = "cget",
 		.mode = COMMAND_ANY,
-		.jim_handler = jim_arm_tpiu_swo_configure,
+		.handler = handle_arm_tpiu_swo_configure,
 		.help  = "returns the specified TPIU/SWO attribute",
 		.usage = "attribute",
 	},
@@ -892,21 +915,59 @@ static const struct command_registration arm_tpiu_swo_instance_command_handlers[
 	COMMAND_REGISTRATION_DONE
 };
 
-static int arm_tpiu_swo_create(Jim_Interp *interp, struct arm_tpiu_swo_object *obj)
+COMMAND_HANDLER(handle_arm_tpiu_swo_create)
 {
-	struct command_context *cmd_ctx;
-	Jim_Cmd *cmd;
-	int e;
+	int retval = ERROR_FAIL;
 
-	cmd_ctx = current_command_context(interp);
-	assert(cmd_ctx);
+	if (!CMD_ARGC)
+		return ERROR_COMMAND_SYNTAX_ERROR;
 
 	/* does this command exist? */
-	cmd = Jim_GetCommand(interp, Jim_NewStringObj(interp, obj->name, -1), JIM_NONE);
-	if (cmd) {
-		Jim_SetResultFormatted(interp, "cannot create TPIU object because a command with name '%s' already exists",
-			obj->name);
-		return JIM_ERR;
+	Jim_Cmd *jimcmd = Jim_GetCommand(CMD_CTX->interp, CMD_JIMTCL_ARGV[0], JIM_NONE);
+	if (jimcmd) {
+		command_print(CMD, "cannot create TPIU object because a command with name '%s' already exists",
+			CMD_ARGV[0]);
+		return ERROR_FAIL;
+	}
+
+	struct arm_tpiu_swo_object *obj = calloc(1, sizeof(struct arm_tpiu_swo_object));
+	if (!obj) {
+		LOG_ERROR("Out of memory");
+		return ERROR_FAIL;
+	}
+	INIT_LIST_HEAD(&obj->connections);
+	adiv5_mem_ap_spot_init(&obj->spot);
+	obj->spot.base = TPIU_SWO_DEFAULT_BASE;
+	obj->port_width = 1;
+	obj->out_filename = strdup("external");
+	if (!obj->out_filename) {
+		LOG_ERROR("Out of memory");
+		goto err_exit;
+	}
+
+	obj->name = strdup(CMD_ARGV[0]);
+	if (!obj->name) {
+		LOG_ERROR("Out of memory");
+		goto err_exit;
+	}
+
+	/* Do the rest as "configure" options */
+	struct jim_getopt_info goi;
+	jim_getopt_setup(&goi, CMD_CTX->interp, CMD_ARGC - 1, CMD_JIMTCL_ARGV + 1);
+	goi.is_configure = 1;
+	int e = arm_tpiu_swo_configure(&goi, obj);
+
+	int reslen;
+	const char *result = Jim_GetString(Jim_GetResult(CMD_CTX->interp), &reslen);
+	if (reslen > 0)
+		command_print(CMD, "%s", result);
+
+	if (e != JIM_OK)
+		goto err_exit;
+
+	if (!obj->spot.dap || obj->spot.ap_num == DP_APSEL_INVALID) {
+		command_print(CMD, "-dap and -ap-num required when creating TPIU");
+		goto err_exit;
 	}
 
 	/* now - create the new tpiu/swo name command */
@@ -920,65 +981,19 @@ static int arm_tpiu_swo_create(Jim_Interp *interp, struct arm_tpiu_swo_object *o
 		},
 		COMMAND_REGISTRATION_DONE
 	};
-	e = register_commands_with_data(cmd_ctx, NULL, obj_commands, obj);
-	if (e != ERROR_OK)
-		return JIM_ERR;
+	retval = register_commands_with_data(CMD_CTX, NULL, obj_commands, obj);
+	if (retval != ERROR_OK)
+		goto err_exit;
 
 	list_add_tail(&obj->lh, &all_tpiu_swo);
 
-	return JIM_OK;
-}
-
-static int jim_arm_tpiu_swo_create(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
-{
-	struct jim_getopt_info goi;
-	jim_getopt_setup(&goi, interp, argc - 1, argv + 1);
-	if (goi.argc < 1) {
-		Jim_WrongNumArgs(interp, 1, argv, "name ?option option ...?");
-		return JIM_ERR;
-	}
-
-	struct arm_tpiu_swo_object *obj = calloc(1, sizeof(struct arm_tpiu_swo_object));
-	if (!obj) {
-		LOG_ERROR("Out of memory");
-		return JIM_ERR;
-	}
-	INIT_LIST_HEAD(&obj->connections);
-	adiv5_mem_ap_spot_init(&obj->spot);
-	obj->spot.base = TPIU_SWO_DEFAULT_BASE;
-	obj->port_width = 1;
-
-	Jim_Obj *n;
-	jim_getopt_obj(&goi, &n);
-	obj->name = strdup(Jim_GetString(n, NULL));
-	if (!obj->name) {
-		LOG_ERROR("Out of memory");
-		free(obj);
-		return JIM_ERR;
-	}
-
-	/* Do the rest as "configure" options */
-	goi.isconfigure = 1;
-	int e = arm_tpiu_swo_configure(&goi, obj);
-	if (e != JIM_OK)
-		goto err_exit;
-
-	if (!obj->spot.dap || obj->spot.ap_num == DP_APSEL_INVALID) {
-		Jim_SetResultString(goi.interp, "-dap and -ap-num required when creating TPIU", -1);
-		goto err_exit;
-	}
-
-	e = arm_tpiu_swo_create(goi.interp, obj);
-	if (e != JIM_OK)
-		goto err_exit;
-
-	return JIM_OK;
+	return ERROR_OK;
 
 err_exit:
 	free(obj->name);
 	free(obj->out_filename);
 	free(obj);
-	return JIM_ERR;
+	return retval;
 }
 
 COMMAND_HANDLER(handle_arm_tpiu_swo_names)
@@ -1021,8 +1036,8 @@ COMMAND_HANDLER(handle_tpiu_deprecated_config_command)
 	struct arm_tpiu_swo_object *obj = NULL;
 	int retval;
 
-	if (strcmp(target->type->name, "cortex_m") &&
-		strcmp(target->type->name, "hla_target")) {
+	if (strcmp(target_type_name(target), "cortex_m") &&
+		strcmp(target_type_name(target), "hla_target")) {
 		LOG_ERROR(MSG "Current target is not a Cortex-M nor a HLA");
 		return ERROR_FAIL;
 	}
@@ -1173,7 +1188,7 @@ static const struct command_registration arm_tpiu_swo_subcommand_handlers[] = {
 	{
 		.name = "create",
 		.mode = COMMAND_ANY,
-		.jim_handler = jim_arm_tpiu_swo_create,
+		.handler = handle_arm_tpiu_swo_create,
 		.usage = "name [-dap dap] [-ap-num num] [-baseaddr baseaddr]",
 		.help = "Creates a new TPIU or SWO object",
 	},

@@ -66,6 +66,7 @@ static const struct command_registration dapdirect_jtag_subcommand_handlers[] = 
 			"['-ignore-version'] "
 			"['-ignore-bypass'] "
 			"['-ircapture' number] "
+			"['-ir-bypass' number] "
 			"['-mask' number]",
 	},
 	{
@@ -117,7 +118,8 @@ static const struct command_registration dapdirect_jtag_subcommand_handlers[] = 
 	{
 		.name = "cget",
 		.mode = COMMAND_EXEC,
-		.jim_handler = jim_jtag_configure,
+		.handler = handle_jtag_configure,
+		.usage = "",
 	},
 	{
 		.name = "names",
@@ -156,6 +158,7 @@ static const struct command_registration dapdirect_swd_subcommand_handlers[] = {
 			"['-ignore-version'] "
 			"['-ignore-bypass'] "
 			"['-ircapture' number] "
+			"['-ir-bypass' number] "
 			"['-mask' number]",
 	},
 	COMMAND_REGISTRATION_DONE
@@ -204,13 +207,13 @@ static int dapdirect_init(struct command_context *ctx)
 }
 
 static struct transport dapdirect_jtag_transport = {
-	.name = "dapdirect_jtag",
+	.id = TRANSPORT_DAPDIRECT_JTAG,
 	.select = dapdirect_jtag_select,
 	.init = dapdirect_init,
 };
 
 static struct transport dapdirect_swd_transport = {
-	.name = "dapdirect_swd",
+	.id = TRANSPORT_DAPDIRECT_SWD,
 	.select = dapdirect_swd_select,
 	.init = dapdirect_init,
 };

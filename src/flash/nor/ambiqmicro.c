@@ -124,7 +124,7 @@ FLASH_BANK_COMMAND_HANDLER(ambiqmicro_flash_bank_command)
 	if (CMD_ARGC < 6)
 		return ERROR_COMMAND_SYNTAX_ERROR;
 
-	ambiqmicro_info = calloc(sizeof(struct ambiqmicro_flash_bank), 1);
+	ambiqmicro_info = calloc(1, sizeof(struct ambiqmicro_flash_bank));
 
 	bank->driver_priv = ambiqmicro_info;
 
@@ -309,9 +309,9 @@ static int ambiqmicro_exec_command(struct target *target,
 			 */
 			target_poll(target);
 			alive_sleep(100);
-			LOG_DEBUG("state = %d", target->state);
 		} else {
-			LOG_ERROR("Target not halted or running %d", target->state);
+			LOG_ERROR("Target not halted or running (state is %s)",
+					  target_state_name(target));
 			break;
 		}
 	}

@@ -93,7 +93,7 @@ static int telnet_output(struct command_context *cmd_ctx, const char *line)
 	return telnet_outputline(connection, line);
 }
 
-static void telnet_log_callback(void *priv, const char *file, unsigned line,
+static void telnet_log_callback(void *priv, const char *file, unsigned int line,
 	const char *function, const char *string)
 {
 	struct connection *connection = priv;
@@ -570,7 +570,7 @@ static void telnet_auto_complete(struct connection *connection)
 		struct list_head lh;
 	};
 
-	LIST_HEAD(matches);
+	OOCD_LIST_HEAD(matches);
 
 	/* - user command sequence, either at line beginning
 	 *   or we start over after these characters ';', '[', '{'
@@ -671,7 +671,7 @@ static void telnet_auto_complete(struct connection *connection)
 			} else if (jimcmd_is_oocd_command(jim_cmd)) {
 				struct command *cmd = jimcmd_privdata(jim_cmd);
 
-				if (cmd && !cmd->handler && !cmd->jim_handler) {
+				if (cmd && !cmd->handler) {
 					/* Initial part of a multi-word command. Ignore it! */
 					ignore_cmd = true;
 				} else if (cmd && cmd->mode == COMMAND_CONFIG) {
@@ -967,7 +967,6 @@ int telnet_init(char *banner)
 	return ERROR_OK;
 }
 
-/* daemon configuration command telnet_port */
 COMMAND_HANDLER(handle_telnet_port_command)
 {
 	return CALL_COMMAND_HANDLER(server_pipe_command, &telnet_port);
@@ -978,22 +977,33 @@ COMMAND_HANDLER(handle_exit_command)
 	return ERROR_COMMAND_CLOSE_CONNECTION;
 }
 
-static const struct command_registration telnet_command_handlers[] = {
+static const struct command_registration telnet_subcommand_handlers[] = {
 	{
-		.name = "exit",
-		.handler = handle_exit_command,
-		.mode = COMMAND_EXEC,
-		.usage = "",
-		.help = "exit telnet session",
-	},
-	{
-		.name = "telnet_port",
+		.name = "port",
 		.handler = handle_telnet_port_command,
 		.mode = COMMAND_CONFIG,
 		.help = "Specify port on which to listen "
 			"for incoming telnet connections.  "
-			"Read help on 'gdb_port'.",
+			"Read help on 'gdb port'.",
 		.usage = "[port_num]",
+	},
+	COMMAND_REGISTRATION_DONE
+};
+
+static const struct command_registration telnet_command_handlers[] = {
+	{
+		.name = "exit",
+		.handler = handle_exit_command,
+		.mode = COMMAND_ANY,
+		.usage = "",
+		.help = "exit telnet session",
+	},
+	{
+		.name = "telnet",
+		.chain = telnet_subcommand_handlers,
+		.mode = COMMAND_CONFIG,
+		.help = "telnet commands",
+		.usage = "",
 	},
 	COMMAND_REGISTRATION_DONE
 };

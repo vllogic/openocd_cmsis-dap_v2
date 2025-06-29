@@ -47,26 +47,28 @@
 #include "jtag/interface.h"
 #include "jtag/commands.h"
 #include "transport/transport.h"
+#include "target/target.h"
 #include "target/arm_adi_v5.h"
 #include "helper/time_support.h"
 #include "helper/replacements.h"
 #include "helper/log.h"
 #include "helper/list.h"
 
-#define VD_VERSION 46
+#define VD_VERSION 50
 #define VD_BUFFER_LEN 4024
 #define VD_CHEADER_LEN 24
 #define VD_SHEADER_LEN 16
 
 #define VD_MAX_MEMORIES 20
-#define VD_POLL_INTERVAL 500
+#define VD_POLL_INTERVAL 1000
 #define VD_SCALE_PSTOMS 1000000000
 
 /**
  * @brief List of transactor types
  */
 enum {
-	VD_BFM_JTDP   = 0x0001,  /* transactor DAP JTAG DP */
+	VD_BFM_TPIU   = 0x0000,  /* transactor trace TPIU */
+	VD_BFM_DAP6   = 0x0001,  /* transactor DAP ADI V6 */
 	VD_BFM_SWDP   = 0x0002,  /* transactor DAP SWD DP */
 	VD_BFM_AHB    = 0x0003,  /* transactor AMBA AHB */
 	VD_BFM_APB    = 0x0004,  /* transactor AMBA APB */
@@ -204,6 +206,7 @@ struct vd_client {
 	uint32_t poll_max;
 	uint32_t targ_time;
 	int hsocket;
+	int64_t poll_ts;
 	char server_name[32];
 	char bfm_path[128];
 	char mem_path[VD_MAX_MEMORIES][128];
@@ -251,8 +254,13 @@ static int vdebug_socket_open(char *server_addr, uint32_t port)
 
 #ifdef _WIN32
 	hsock = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
-	if (hsock == INVALID_SOCKET)
+	if (hsock < 0)
 		rc = vdebug_socket_error();
+#elif defined __CYGWIN__
+	/* SO_RCVLOWAT unsupported on CYGWIN */
+	hsock = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
+	if (hsock < 0)
+		rc = errno;
 #else
 	uint32_t rcvwat = VD_SHEADER_LEN;    /* size of the rcv header, as rcv min watermark */
 	hsock = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
@@ -462,14 +470,14 @@ static int vdebug_run_reg_queue(int hsock, struct vd_shm *pm, unsigned int count
 				for (unsigned int j = 0; j < num; j++)
 					memcpy(&data[j * awidth], &pm->rd8[(rwords + j) * awidth], awidth);
 			}
-			LOG_DEBUG_IO("read  %04x AS:%02x RG:%02x O:%05x @%03x D:%08x", le_to_h_u16(pm->wid) - count + req,
-				aspace, addr, (vdc.trans_first << 14) | (vdc.trans_last << 15), waddr,
+			LOG_DEBUG("read  %04x AS:%1x RG:%1x O:%05x @%03x D:%08x", le_to_h_u16(pm->wid) - count + req,
+				aspace, addr << 2, (vdc.trans_first << 14) | (vdc.trans_last << 15), waddr,
 				(num ? le_to_h_u32(&pm->rd8[rwords * 4]) : 0xdead));
 			rwords += num * wwidth;
 			waddr += sizeof(uint64_t) / 4; /* waddr past header */
 		} else {
-			LOG_DEBUG_IO("write %04x AS:%02x RG:%02x O:%05x @%03x D:%08x", le_to_h_u16(pm->wid) - count + req,
-				aspace, addr, (vdc.trans_first << 14) | (vdc.trans_last << 15), waddr,
+			LOG_DEBUG("write %04x AS:%1x RG:%1x O:%05x @%03x D:%08x", le_to_h_u16(pm->wid) - count + req,
+				aspace, addr << 2, (vdc.trans_first << 14) | (vdc.trans_last << 15), waddr,
 				le_to_h_u32(&pm->wd8[(waddr + num + 1) * 4]));
 			waddr += sizeof(uint64_t) / 4 + (num * wwidth * awidth + 3) / 4;
 		}
@@ -513,7 +521,7 @@ static int vdebug_open(int hsock, struct vd_shm *pm, const char *path,
 		rc = VD_ERR_VERSION;
 	} else {
 		pm->cmd = VD_CMD_CONNECT;
-		pm->type = type;               /* BFM type to connect to, here JTAG */
+		pm->type = type;               /* BFM type to connect to */
 		h_u32_to_le(pm->rwdata, sig_mask | VD_SIG_BUF | (VD_SIG_BUF << 16));
 		h_u16_to_le(pm->wbytes, strlen(path) + 1);
 		h_u16_to_le(pm->rbytes, 12);
@@ -833,6 +841,35 @@ static void vdebug_mem_close(int hsock, struct vd_shm *pm, uint8_t ndx)
 }
 
 
+/* function gets invoked through a callback every VD_POLL_INTERVAL ms
+ * if the idle time, measured by VD_POLL_INTERVAL - targ_time is more than poll_min
+ * the wait function is called and its time measured and wait cycles adjusted.
+ * The wait allows hardware to advance, when no data activity from the vdebug occurs
+ */
+static int vdebug_poll(void *priv)
+{
+	int64_t ts, te;
+
+	ts = timeval_ms();
+	if (ts - vdc.poll_ts - vdc.targ_time >= vdc.poll_min) {
+		vdebug_wait(vdc.hsocket, pbuf, vdc.poll_cycles);
+		te = timeval_ms();
+		LOG_DEBUG("poll after %" PRId64 "ms, busy %" PRIu32 "ms; wait %" PRIu32 " %" PRId64 "ms",
+			ts - vdc.poll_ts, vdc.targ_time, vdc.poll_cycles, te - ts);
+
+		if (te - ts + vdc.targ_time < vdc.poll_max / 2)
+			vdc.poll_cycles *= 2;
+		else if (te - ts + vdc.targ_time > vdc.poll_max)
+			vdc.poll_cycles /= 2;
+	} else {
+		LOG_DEBUG("poll after %" PRId64 "ms, busy %" PRIu32 "ms", ts - vdc.poll_ts, vdc.targ_time);
+	}
+	vdc.poll_ts = ts;
+	vdc.targ_time = 0;                 /* reset target time counter */
+
+	return ERROR_OK;
+}
+
 static int vdebug_init(void)
 {
 	vdc.hsocket = vdebug_socket_open(vdc.server_name, vdc.server_port);
@@ -852,6 +889,7 @@ static int vdebug_init(void)
 	}
 	vdc.trans_first = 1;
 	vdc.poll_cycles = vdc.poll_max;
+	vdc.poll_ts = timeval_ms();
 	uint32_t sig_mask = VD_SIG_RESET;
 	if (transport_is_jtag())
 		sig_mask |= VD_SIG_TRST | VD_SIG_TCKDIV;
@@ -870,6 +908,8 @@ static int vdebug_init(void)
 				LOG_ERROR("0x%x cannot connect to %s", rc, vdc.mem_path[i]);
 		}
 
+		target_register_timer_callback(vdebug_poll, VD_POLL_INTERVAL,
+									   TARGET_TIMER_TYPE_PERIODIC, &vdc);
 		LOG_INFO("vdebug %d connected to %s through %s:%" PRIu16,
 				 VD_VERSION, vdc.bfm_path, vdc.server_name, vdc.server_port);
 	}
@@ -879,6 +919,8 @@ static int vdebug_init(void)
 
 static int vdebug_quit(void)
 {
+	target_unregister_timer_callback(vdebug_poll, &vdc);
+
 	for (uint8_t i = 0; i < vdc.mem_ndx; i++)
 		if (vdc.mem_width[i])
 			vdebug_mem_close(vdc.hsocket, pbuf, i);
@@ -917,7 +959,7 @@ static int vdebug_reset(int trst, int srst)
 
 static int vdebug_jtag_tms_seq(const uint8_t *tms, int num, uint8_t f_flush)
 {
-	LOG_INFO("tms  len:%d tms:%x", num, *tms);
+	LOG_DEBUG_IO("tms  len:%d tms:%x", num, *tms);
 
 	return vdebug_jtag_shift_tap(vdc.hsocket, pbuf, num, *tms, 0, NULL, 0, 0, NULL, f_flush);
 }
@@ -925,11 +967,11 @@ static int vdebug_jtag_tms_seq(const uint8_t *tms, int num, uint8_t f_flush)
 static int vdebug_jtag_path_move(struct pathmove_command *cmd, uint8_t f_flush)
 {
 	uint8_t tms[DIV_ROUND_UP(cmd->num_states, 8)];
-	LOG_INFO("path num states %d", cmd->num_states);
+	LOG_DEBUG_IO("path num states %u", cmd->num_states);
 
 	memset(tms, 0, DIV_ROUND_UP(cmd->num_states, 8));
 
-	for (uint8_t i = 0; i < cmd->num_states; i++) {
+	for (unsigned int i = 0; i < cmd->num_states; i++) {
 		if (tap_state_transition(tap_get_state(), true) == cmd->path[i])
 			buf_set_u32(tms, i, 1, 1);
 		tap_set_state(cmd->path[i]);
@@ -938,14 +980,14 @@ static int vdebug_jtag_path_move(struct pathmove_command *cmd, uint8_t f_flush)
 	return vdebug_jtag_tms_seq(tms, cmd->num_states, f_flush);
 }
 
-static int vdebug_jtag_tlr(tap_state_t state, uint8_t f_flush)
+static int vdebug_jtag_tlr(enum tap_state state, uint8_t f_flush)
 {
 	int rc = ERROR_OK;
 
-	tap_state_t cur = tap_get_state();
+	enum tap_state cur = tap_get_state();
 	uint8_t tms_pre = tap_get_tms_path(cur, state);
 	uint8_t num_pre = tap_get_tms_path_len(cur, state);
-	LOG_INFO("tlr  from %x to %x", cur, state);
+	LOG_DEBUG_IO("tlr  from %x to %x", cur, state);
 	if (cur != state) {
 		rc = vdebug_jtag_shift_tap(vdc.hsocket, pbuf, num_pre, tms_pre, 0, NULL, 0, 0, NULL, f_flush);
 		tap_set_state(state);
@@ -958,16 +1000,16 @@ static int vdebug_jtag_scan(struct scan_command *cmd, uint8_t f_flush)
 {
 	int rc = ERROR_OK;
 
-	tap_state_t cur = tap_get_state();
+	enum tap_state cur = tap_get_state();
 	uint8_t state = cmd->ir_scan ? TAP_IRSHIFT : TAP_DRSHIFT;
 	uint8_t tms_pre = tap_get_tms_path(cur, state);
 	uint8_t num_pre = tap_get_tms_path_len(cur, state);
 	uint8_t tms_post = tap_get_tms_path(state, cmd->end_state);
 	uint8_t num_post = tap_get_tms_path_len(state, cmd->end_state);
-	int num_bits = jtag_scan_size(cmd);
-	LOG_DEBUG("scan len:%d fields:%d ir/!dr:%d state cur:%x end:%x",
+	const unsigned int num_bits = jtag_scan_size(cmd);
+	LOG_DEBUG_IO("scan len:%u fields:%u ir/!dr:%d state cur:%x end:%x",
 			  num_bits, cmd->num_fields, cmd->ir_scan, cur, cmd->end_state);
-	for (int i = 0; i < cmd->num_fields; i++) {
+	for (unsigned int i = 0; i < cmd->num_fields; i++) {
 		uint8_t cur_num_pre = i == 0 ? num_pre : 0;
 		uint8_t cur_tms_pre = i == 0 ? tms_pre : 0;
 		uint8_t cur_num_post = i == cmd->num_fields - 1 ? num_post : 0;
@@ -986,24 +1028,24 @@ static int vdebug_jtag_scan(struct scan_command *cmd, uint8_t f_flush)
 	return rc;
 }
 
-static int vdebug_jtag_runtest(int cycles, tap_state_t state, uint8_t f_flush)
+static int vdebug_jtag_runtest(unsigned int num_cycles, enum tap_state state, uint8_t f_flush)
 {
-	tap_state_t cur = tap_get_state();
+	enum tap_state cur = tap_get_state();
 	uint8_t tms_pre = tap_get_tms_path(cur, state);
 	uint8_t num_pre = tap_get_tms_path_len(cur, state);
-	LOG_DEBUG("idle len:%d state cur:%x end:%x", cycles, cur, state);
-	int rc = vdebug_jtag_shift_tap(vdc.hsocket, pbuf, num_pre, tms_pre, cycles, NULL, 0, 0, NULL, f_flush);
+	LOG_DEBUG_IO("idle len:%u state cur:%x end:%x", num_cycles, cur, state);
+	int rc = vdebug_jtag_shift_tap(vdc.hsocket, pbuf, num_pre, tms_pre, num_cycles, NULL, 0, 0, NULL, f_flush);
 	if (cur != state)
 		tap_set_state(state);
 
 	return rc;
 }
 
-static int vdebug_jtag_stableclocks(int num, uint8_t f_flush)
+static int vdebug_jtag_stableclocks(unsigned int num_cycles, uint8_t f_flush)
 {
-	LOG_INFO("stab len:%d state cur:%x", num, tap_get_state());
+	LOG_DEBUG("stab len:%u state cur:%x", num_cycles, tap_get_state());
 
-	return vdebug_jtag_shift_tap(vdc.hsocket, pbuf, 0, 0, num, NULL, 0, 0, NULL, f_flush);
+	return vdebug_jtag_shift_tap(vdc.hsocket, pbuf, 0, 0, num_cycles, NULL, 0, 0, NULL, f_flush);
 }
 
 static int vdebug_sleep(int us)
@@ -1040,11 +1082,11 @@ static int vdebug_jtag_div(int speed, int *khz)
 	return ERROR_OK;
 }
 
-static int vdebug_jtag_execute_queue(void)
+static int vdebug_jtag_execute_queue(struct jtag_command *cmd_queue)
 {
 	int rc = ERROR_OK;
 
-	for (struct jtag_command *cmd = jtag_command_queue; rc == ERROR_OK && cmd; cmd = cmd->next) {
+	for (struct jtag_command *cmd = cmd_queue; rc == ERROR_OK && cmd; cmd = cmd->next) {
 		switch (cmd->type) {
 		case JTAG_RUNTEST:
 			rc = vdebug_jtag_runtest(cmd->cmd.runtest->num_cycles, cmd->cmd.runtest->end_state, !cmd->next);
@@ -1076,6 +1118,41 @@ static int vdebug_jtag_execute_queue(void)
 	return rc;
 }
 
+static int vdebug_dap_bankselect(struct adiv5_ap *ap, unsigned int reg)
+{
+	int rc = ERROR_OK;
+	uint64_t sel;
+
+	if (is_adiv6(ap->dap)) {
+		sel = ap->ap_num | (reg & 0x00000FF0);
+		if (sel != (ap->dap->select & ~0xfull)) {
+			sel |= ap->dap->select & DP_SELECT_DPBANK;
+			if (ap->dap->asize > 32)
+				sel |= (DP_SELECT1 >> 4) & DP_SELECT_DPBANK;
+			ap->dap->select = sel;
+			ap->dap->select_valid = true;
+			rc = vdebug_reg_write(vdc.hsocket, pbuf, DP_SELECT >> 2, (uint32_t)sel, VD_ASPACE_DP, 0);
+			if (rc == ERROR_OK) {
+				ap->dap->select_valid = true;
+				if (ap->dap->asize > 32)
+					rc = vdebug_reg_write(vdc.hsocket, pbuf, (DP_SELECT1 & DP_SELECT_DPBANK) >> 2,
+					(uint32_t)(sel >> 32), VD_ASPACE_DP, 0);
+				if (rc == ERROR_OK)
+					ap->dap->select1_valid = true;
+			}
+		}
+	} else {    /* ADIv5 */
+		sel = (ap->ap_num << 24) | (reg & ADIV5_DP_SELECT_APBANK);
+		if (sel != ap->dap->select) {
+			ap->dap->select = sel;
+			rc = vdebug_reg_write(vdc.hsocket, pbuf, DP_SELECT >> 2, (uint32_t)sel, VD_ASPACE_DP, 0);
+			if (rc == ERROR_OK)
+				ap->dap->select_valid = true;
+		}
+	}
+	return rc;
+}
+
 static int vdebug_dap_connect(struct adiv5_dap *dap)
 {
 	return dap_dp_init(dap);
@@ -1088,20 +1165,29 @@ static int vdebug_dap_send_sequence(struct adiv5_dap *dap, enum swd_special_seq 
 
 static int vdebug_dap_queue_dp_read(struct adiv5_dap *dap, unsigned int reg, uint32_t *data)
 {
+	if (reg != DP_SELECT && reg != DP_RDBUFF
+		&& (!dap->select_valid || ((reg >> 4) & DP_SELECT_DPBANK) != (dap->select & DP_SELECT_DPBANK))) {
+		dap->select = (dap->select & ~DP_SELECT_DPBANK) | ((reg >> 4) & DP_SELECT_DPBANK);
+		vdebug_reg_write(vdc.hsocket, pbuf, DP_SELECT >> 2, dap->select, VD_ASPACE_DP, 0);
+		dap->select_valid = true;
+	}
 	return vdebug_reg_read(vdc.hsocket, pbuf, (reg & DP_SELECT_DPBANK) >> 2, data, VD_ASPACE_DP, 0);
 }
 
 static int vdebug_dap_queue_dp_write(struct adiv5_dap *dap, unsigned int reg, uint32_t data)
 {
+	if (reg != DP_SELECT && reg != DP_RDBUFF
+		&& (!dap->select_valid || ((reg >> 4) & DP_SELECT_DPBANK) != (dap->select & DP_SELECT_DPBANK))) {
+		dap->select = (dap->select & ~DP_SELECT_DPBANK) | ((reg >> 4) & DP_SELECT_DPBANK);
+		vdebug_reg_write(vdc.hsocket, pbuf, DP_SELECT >> 2, dap->select, VD_ASPACE_DP, 0);
+		dap->select_valid = true;
+	}
 	return vdebug_reg_write(vdc.hsocket, pbuf, (reg & DP_SELECT_DPBANK) >> 2, data, VD_ASPACE_DP, 0);
 }
 
 static int vdebug_dap_queue_ap_read(struct adiv5_ap *ap, unsigned int reg, uint32_t *data)
 {
-	if ((reg & ADIV5_DP_SELECT_APBANK) != ap->dap->select) {
-		vdebug_reg_write(vdc.hsocket, pbuf, DP_SELECT >> 2, reg & ADIV5_DP_SELECT_APBANK, VD_ASPACE_DP, 0);
-		ap->dap->select = reg & ADIV5_DP_SELECT_APBANK;
-	}
+	vdebug_dap_bankselect(ap, reg);
 
 	vdebug_reg_read(vdc.hsocket, pbuf, (reg & DP_SELECT_DPBANK) >> 2, NULL, VD_ASPACE_AP, 0);
 
@@ -1110,11 +1196,7 @@ static int vdebug_dap_queue_ap_read(struct adiv5_ap *ap, unsigned int reg, uint3
 
 static int vdebug_dap_queue_ap_write(struct adiv5_ap *ap, unsigned int reg, uint32_t data)
 {
-	if ((reg & ADIV5_DP_SELECT_APBANK) != ap->dap->select) {
-		vdebug_reg_write(vdc.hsocket, pbuf, DP_SELECT >> 2, reg & ADIV5_DP_SELECT_APBANK, VD_ASPACE_DP, 0);
-		ap->dap->select = reg & ADIV5_DP_SELECT_APBANK;
-	}
-
+	vdebug_dap_bankselect(ap, reg);
 	return vdebug_reg_write(vdc.hsocket, pbuf, (reg & DP_SELECT_DPBANK) >> 2, data, VD_ASPACE_AP, 0);
 }
 
@@ -1170,7 +1252,7 @@ COMMAND_HANDLER(vdebug_set_bfm)
 		break;
 	}
 	if (transport_is_dapdirect_swd())
-		vdc.bfm_type = VD_BFM_SWDP;
+		vdc.bfm_type = strstr(vdc.bfm_path, "dap6") ? VD_BFM_DAP6 : VD_BFM_SWDP;
 	else
 		vdc.bfm_type = VD_BFM_JTAG;
 	LOG_DEBUG("bfm_path: %s clk_period %ups", vdc.bfm_path, vdc.bfm_period);
@@ -1253,16 +1335,16 @@ static const struct command_registration vdebug_command_handlers[] = {
 	{
 		.name = "batching",
 		.handler = &vdebug_set_batching,
-		.mode = COMMAND_CONFIG,
+		.mode = COMMAND_ANY,
 		.help = "set the transaction batching no|wr|rd [0|1|2]",
 		.usage = "<level>",
 	},
 	{
 		.name = "polling",
 		.handler = &vdebug_set_polling,
-		.mode = COMMAND_CONFIG,
-		.help = "set the polling pause, executing hardware cycles between min and max",
-		.usage = "<min cycles> <max cycles>",
+		.mode = COMMAND_ANY,
+		.help = "set the min idle time and max wait time in ms",
+		.usage = "<min_idle> <max_wait>",
 	},
 	COMMAND_REGISTRATION_DONE
 };
@@ -1296,11 +1378,10 @@ static const struct dap_ops vdebug_dap_ops = {
 	.quit = NULL, /* optional */
 };
 
-static const char *const vdebug_transports[] = { "jtag", "dapdirect_swd", NULL };
-
 struct adapter_driver vdebug_adapter_driver = {
 	.name = "vdebug",
-	.transports = vdebug_transports,
+	.transport_ids = TRANSPORT_JTAG | TRANSPORT_DAPDIRECT_SWD,
+	.transport_preferred_id = TRANSPORT_JTAG,
 	.speed = vdebug_jtag_speed,
 	.khz = vdebug_jtag_khz,
 	.speed_div = vdebug_jtag_div,

@@ -2384,6 +2384,10 @@ sub show_type {
 sub report {
 	my ($level, $type, $msg) = @_;
 
+	# OpenOCD specific: Begin: Flatten ERROR, WARNING and CHECK as ERROR
+	$level = 'ERROR';
+	# OpenOCD specific: End
+
 	if (!show_type($type) ||
 	    (defined $tst_only && $msg !~ /\Q$tst_only\E/)) {
 		return 0;
@@ -3247,6 +3251,9 @@ sub process {
 
 # Check for Gerrit Change-Ids not in any patch context
 		if ($realfile eq '' && !$has_patch_separator && $line =~ /^\s*change-id:/i) {
+			# OpenOCD specific: Begin: exclude gerrit's Change-Id line from commit description
+			$in_commit_log = 0;
+			# OpenOCD specific: End
 			if (ERROR("GERRIT_CHANGE_ID",
 			          "Remove Gerrit Change-Id's before submitting upstream\n" . $herecurr) &&
 			    $fix) {
@@ -3724,8 +3731,10 @@ sub process {
 				} elsif ($realfile =~ /\.rst$/) {
 					$comment = '..';
 				# OpenOCD specific: Begin
-				} elsif ($realfile =~ /\.(am|cfg|tcl)$/) {
+				} elsif (($realfile =~ /\.(am|cfg|tcl)$/) || ($realfile =~ /\/Makefile$/)) {
 					$comment = '#';
+				} elsif ($realfile =~ /\.(ld)$/) {
+					$comment = '/*';
 				# OpenOCD specific: End
 				}
 
@@ -3769,7 +3778,11 @@ sub process {
 		}
 
 # check we are in a valid source file if not then ignore this hunk
+		if (!$OpenOCD) {
 		next if ($realfile !~ /\.(h|c|s|S|sh|dtsi|dts)$/);
+		} else { # !$OpenOCD
+		next if ($realfile !~ /\.(h|c|s|S|sh|dtsi|dts|tcl|cfg|ac|am)$/);
+		} # !$OpenOCD
 
 # check for using SPDX-License-Identifier on the wrong line number
 		if ($realline != $checklicenseline &&
@@ -7634,9 +7647,15 @@ sub process {
 	print report_dump();
 	if ($summary && !($clean == 1 && $quiet == 1)) {
 		print "$filename " if ($summary_file);
+		if (!$OpenOCD) {
 		print "total: $cnt_error errors, $cnt_warn warnings, " .
 			(($check)? "$cnt_chk checks, " : "") .
 			"$cnt_lines lines checked\n";
+		} # $OpenOCD
+		# OpenOCD specific: Begin: Report total as errors
+		my $total = $cnt_error + $cnt_warn + $cnt_chk;
+		print "total: $total errors, $cnt_lines lines checked\n";
+		# OpenOCD specific: End
 	}
 
 	if ($quiet == 0) {

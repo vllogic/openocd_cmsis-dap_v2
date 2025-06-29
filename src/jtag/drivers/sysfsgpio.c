@@ -255,7 +255,7 @@ static int sysfsgpio_swd_write(int swclk, int swdio)
  * The sysfs value will read back either '0' or '1'. The trick here is to call
  * lseek to bypass buffering in the sysfs kernel driver.
  */
-static bb_value_t sysfsgpio_read(void)
+static enum bb_value sysfsgpio_read(void)
 {
 	char buf[1];
 
@@ -545,8 +545,6 @@ static const struct command_registration sysfsgpio_command_handlers[] = {
 static int sysfsgpio_init(void);
 static int sysfsgpio_quit(void);
 
-static const char * const sysfsgpio_transports[] = { "jtag", "swd", NULL };
-
 static struct jtag_interface sysfsgpio_interface = {
 	.supported = DEBUG_CAP_TMS_SEQ,
 	.execute_queue = bitbang_execute_queue,
@@ -554,7 +552,8 @@ static struct jtag_interface sysfsgpio_interface = {
 
 struct adapter_driver sysfsgpio_adapter_driver = {
 	.name = "sysfsgpio",
-	.transports = sysfsgpio_transports,
+	.transport_ids = TRANSPORT_JTAG | TRANSPORT_SWD,
+	.transport_preferred_id = TRANSPORT_JTAG,
 	.commands = sysfsgpio_command_handlers,
 
 	.init = sysfsgpio_init,
@@ -565,7 +564,7 @@ struct adapter_driver sysfsgpio_adapter_driver = {
 	.swd_ops = &bitbang_swd,
 };
 
-static struct bitbang_interface sysfsgpio_bitbang = {
+static const struct bitbang_interface sysfsgpio_bitbang = {
 	.read = sysfsgpio_read,
 	.write = sysfsgpio_write,
 	.swdio_read = sysfsgpio_swdio_read,

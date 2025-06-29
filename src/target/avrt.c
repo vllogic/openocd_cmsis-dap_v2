@@ -16,25 +16,25 @@
 #define AVR_JTAG_INS_LEN	4
 
 /* forward declarations */
-static int avr_target_create(struct target *target, Jim_Interp *interp);
+static int avr_target_create(struct target *target);
 static int avr_init_target(struct command_context *cmd_ctx, struct target *target);
 
 static int avr_arch_state(struct target *target);
 static int avr_poll(struct target *target);
 static int avr_halt(struct target *target);
-static int avr_resume(struct target *target, int current, target_addr_t address,
-		int handle_breakpoints, int debug_execution);
-static int avr_step(struct target *target, int current, target_addr_t address,
-		int handle_breakpoints);
+static int avr_resume(struct target *target, bool current, target_addr_t address,
+		bool handle_breakpoints, bool debug_execution);
+static int avr_step(struct target *target, bool current, target_addr_t address,
+		bool handle_breakpoints);
 
 static int avr_assert_reset(struct target *target);
 static int avr_deassert_reset(struct target *target);
 
 /* IR and DR functions */
-static int mcu_write_ir(struct jtag_tap *tap, uint8_t *ir_in, uint8_t *ir_out, int ir_len, int rti);
-static int mcu_write_dr(struct jtag_tap *tap, uint8_t *dr_in, uint8_t *dr_out, int dr_len, int rti);
-static int mcu_write_ir_u8(struct jtag_tap *tap, uint8_t *ir_in, uint8_t ir_out, int ir_len, int rti);
-static int mcu_write_dr_u32(struct jtag_tap *tap, uint32_t *ir_in, uint32_t ir_out, int dr_len, int rti);
+static int mcu_write_ir(struct jtag_tap *tap, uint8_t *ir_in, uint8_t *ir_out, int ir_len);
+static int mcu_write_dr(struct jtag_tap *tap, uint8_t *dr_in, uint8_t *dr_out, int dr_len);
+static int mcu_write_ir_u8(struct jtag_tap *tap, uint8_t *ir_in, uint8_t ir_out, int ir_len);
+static int mcu_write_dr_u32(struct jtag_tap *tap, uint32_t *ir_in, uint32_t ir_out, int dr_len);
 
 struct target_type avr_target = {
 	.name = "avr",
@@ -68,7 +68,7 @@ struct target_type avr_target = {
 	.init_target = avr_init_target,
 };
 
-static int avr_target_create(struct target *target, Jim_Interp *interp)
+static int avr_target_create(struct target *target)
 {
 	struct avr_common *avr = calloc(1, sizeof(struct avr_common));
 
@@ -105,14 +105,15 @@ static int avr_halt(struct target *target)
 	return ERROR_OK;
 }
 
-static int avr_resume(struct target *target, int current, target_addr_t address,
-		int handle_breakpoints, int debug_execution)
+static int avr_resume(struct target *target, bool current, target_addr_t address,
+		bool handle_breakpoints, bool debug_execution)
 {
 	LOG_DEBUG("%s", __func__);
 	return ERROR_OK;
 }
 
-static int avr_step(struct target *target, int current, target_addr_t address, int handle_breakpoints)
+static int avr_step(struct target *target, bool current, target_addr_t address,
+		bool handle_breakpoints)
 {
 	LOG_DEBUG("%s", __func__);
 	return ERROR_OK;
@@ -137,23 +138,23 @@ static int avr_deassert_reset(struct target *target)
 int avr_jtag_senddat(struct jtag_tap *tap, uint32_t *dr_in, uint32_t dr_out,
 		int len)
 {
-	return mcu_write_dr_u32(tap, dr_in, dr_out, len, 1);
+	return mcu_write_dr_u32(tap, dr_in, dr_out, len);
 }
 
 int avr_jtag_sendinstr(struct jtag_tap *tap, uint8_t *ir_in, uint8_t ir_out)
 {
-	return mcu_write_ir_u8(tap, ir_in, ir_out, AVR_JTAG_INS_LEN, 1);
+	return mcu_write_ir_u8(tap, ir_in, ir_out, AVR_JTAG_INS_LEN);
 }
 
 /* IR and DR functions */
 static int mcu_write_ir(struct jtag_tap *tap, uint8_t *ir_in, uint8_t *ir_out,
-		int ir_len, int rti)
+		int ir_len)
 {
 	if (!tap) {
 		LOG_ERROR("invalid tap");
 		return ERROR_FAIL;
 	}
-	if (ir_len != tap->ir_length) {
+	if ((unsigned int)ir_len != tap->ir_length) {
 		LOG_ERROR("invalid ir_len");
 		return ERROR_FAIL;
 	}
@@ -166,7 +167,7 @@ static int mcu_write_ir(struct jtag_tap *tap, uint8_t *ir_in, uint8_t *ir_out,
 }
 
 static int mcu_write_dr(struct jtag_tap *tap, uint8_t *dr_in, uint8_t *dr_out,
-		int dr_len, int rti)
+		int dr_len)
 {
 	if (!tap) {
 		LOG_ERROR("invalid tap");
@@ -181,27 +182,27 @@ static int mcu_write_dr(struct jtag_tap *tap, uint8_t *dr_in, uint8_t *dr_out,
 }
 
 static int mcu_write_ir_u8(struct jtag_tap *tap, uint8_t *ir_in,
-		uint8_t ir_out, int ir_len, int rti)
+		uint8_t ir_out, int ir_len)
 {
 	if (ir_len > 8) {
 		LOG_ERROR("ir_len overflow, maximum is 8");
 		return ERROR_FAIL;
 	}
 
-	mcu_write_ir(tap, ir_in, &ir_out, ir_len, rti);
+	mcu_write_ir(tap, ir_in, &ir_out, ir_len);
 
 	return ERROR_OK;
 }
 
 static int mcu_write_dr_u32(struct jtag_tap *tap, uint32_t *dr_in,
-		uint32_t dr_out, int dr_len, int rti)
+		uint32_t dr_out, int dr_len)
 {
 	if (dr_len > 32) {
 		LOG_ERROR("dr_len overflow, maximum is 32");
 		return ERROR_FAIL;
 	}
 
-	mcu_write_dr(tap, (uint8_t *)dr_in, (uint8_t *)&dr_out, dr_len, rti);
+	mcu_write_dr(tap, (uint8_t *)dr_in, (uint8_t *)&dr_out, dr_len);
 
 	return ERROR_OK;
 }

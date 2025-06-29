@@ -43,7 +43,7 @@
 
 struct xlnx_pcie_xvc {
 	int fd;
-	unsigned offset;
+	unsigned int offset;
 	char *device;
 };
 
@@ -128,7 +128,7 @@ static int xlnx_pcie_xvc_execute_stableclocks(struct jtag_command *cmd)
 	size_t write;
 	int err;
 
-	LOG_DEBUG("stableclocks %i cycles", cmd->cmd.runtest->num_cycles);
+	LOG_DEBUG("stableclocks %u cycles", cmd->cmd.runtest->num_cycles);
 
 	while (left) {
 		write = MIN(XLNX_XVC_MAX_BITS, left);
@@ -167,11 +167,11 @@ static int xlnx_pcie_xvc_execute_runtest(struct jtag_command *cmd)
 {
 	int err = ERROR_OK;
 
-	LOG_DEBUG("runtest %i cycles, end in %i",
+	LOG_DEBUG("runtest %u cycles, end in %i",
 		  cmd->cmd.runtest->num_cycles,
 		  cmd->cmd.runtest->end_state);
 
-	tap_state_t tmp_state = tap_get_end_state();
+	enum tap_state tmp_state = tap_get_end_state();
 
 	if (tap_get_state() != TAP_IDLE) {
 		tap_set_end_state(TAP_IDLE);
@@ -200,16 +200,15 @@ static int xlnx_pcie_xvc_execute_runtest(struct jtag_command *cmd)
 
 static int xlnx_pcie_xvc_execute_pathmove(struct jtag_command *cmd)
 {
-	size_t num_states = cmd->cmd.pathmove->num_states;
-	tap_state_t *path = cmd->cmd.pathmove->path;
+	unsigned int num_states = cmd->cmd.pathmove->num_states;
+	enum tap_state *path = cmd->cmd.pathmove->path;
 	int err = ERROR_OK;
-	size_t i;
 
-	LOG_DEBUG("pathmove: %i states, end in %i",
+	LOG_DEBUG("pathmove: %u states, end in %i",
 		  cmd->cmd.pathmove->num_states,
 		  cmd->cmd.pathmove->path[cmd->cmd.pathmove->num_states - 1]);
 
-	for (i = 0; i < num_states; i++) {
+	for (unsigned int i = 0; i < num_states; i++) {
 		if (path[i] == tap_state_transition(tap_get_state(), false)) {
 			err = xlnx_pcie_xvc_transact(1, 1, 0, NULL);
 		} else if (path[i] == tap_state_transition(tap_get_state(), true)) {
@@ -233,7 +232,7 @@ static int xlnx_pcie_xvc_execute_pathmove(struct jtag_command *cmd)
 static int xlnx_pcie_xvc_execute_scan(struct jtag_command *cmd)
 {
 	enum scan_type type = jtag_scan_type(cmd->cmd.scan);
-	tap_state_t saved_end_state = cmd->cmd.scan->end_state;
+	enum tap_state saved_end_state = cmd->cmd.scan->end_state;
 	bool ir_scan = cmd->cmd.scan->ir_scan;
 	uint32_t tdi, tms, tdo;
 	uint8_t *buf, *rd_ptr;
@@ -362,9 +361,9 @@ static int xlnx_pcie_xvc_execute_command(struct jtag_command *cmd)
 	return ERROR_OK;
 }
 
-static int xlnx_pcie_xvc_execute_queue(void)
+static int xlnx_pcie_xvc_execute_queue(struct jtag_command *cmd_queue)
 {
-	struct jtag_command *cmd = jtag_command_queue;
+	struct jtag_command *cmd = cmd_queue;
 	int ret;
 
 	while (cmd) {
@@ -691,11 +690,10 @@ static const struct swd_driver xlnx_pcie_xvc_swd_ops = {
 	.run = xlnx_pcie_xvc_swd_run_queue,
 };
 
-static const char * const xlnx_pcie_xvc_transports[] = { "jtag", "swd", NULL };
-
 struct adapter_driver xlnx_pcie_xvc_adapter_driver = {
 	.name = "xlnx_pcie_xvc",
-	.transports = xlnx_pcie_xvc_transports,
+	.transport_ids = TRANSPORT_JTAG | TRANSPORT_SWD,
+	.transport_preferred_id = TRANSPORT_JTAG,
 	.commands = xlnx_pcie_xvc_command_handlers,
 
 	.init = &xlnx_pcie_xvc_init,

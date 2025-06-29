@@ -12,7 +12,6 @@
 
 #include <jtag/jtag.h>
 #include "target/target.h"
-#include "target/target_type.h"
 #include "target/armv7m.h"
 #include "target/cortex_m.h"
 #include "rtos.h"
@@ -33,7 +32,6 @@
 struct nuttx_params {
 	const char *target_name;
 	const struct rtos_register_stacking *stacking;
-	const struct rtos_register_stacking *(*select_stackinfo)(struct target *target);
 };
 
 /*
@@ -57,19 +55,12 @@ struct symbols {
 	bool optional;
 };
 
-/* Used to index the list of retrieved symbols. See nuttx_symbol_list for the order. */
-enum nuttx_symbol_vals {
-	NX_SYM_READYTORUN = 0,
-	NX_SYM_PIDHASH,
-	NX_SYM_NPIDHASH,
-	NX_SYM_TCB_INFO,
-};
-
 static const struct symbols nuttx_symbol_list[] = {
 	{ "g_readytorun", false },
 	{ "g_pidhash", false },
 	{ "g_npidhash", false },
 	{ "g_tcbinfo", false },
+	{ "g_reg_offs", false},
 	{ NULL, false }
 };
 
@@ -87,18 +78,14 @@ static char *task_state_str[] = {
 	"STOPPED",
 };
 
-static const struct rtos_register_stacking *cortexm_select_stackinfo(struct target *target);
-
 static const struct nuttx_params nuttx_params_list[] = {
 	{
 		.target_name = "cortex_m",
-		.stacking = NULL,
-		.select_stackinfo = cortexm_select_stackinfo,
+		.stacking = &nuttx_stacking_cortex_m,
 	},
 	{
 		.target_name = "hla_target",
-		.stacking = NULL,
-		.select_stackinfo = cortexm_select_stackinfo,
+		.stacking = &nuttx_stacking_cortex_m,
 	},
 	{
 		.target_name = "esp32",
@@ -117,28 +104,6 @@ static const struct nuttx_params nuttx_params_list[] = {
 		.stacking = &nuttx_riscv_stacking,
 	},
 };
-
-static bool cortexm_hasfpu(struct target *target)
-{
-	uint32_t cpacr;
-	struct armv7m_common *armv7m_target = target_to_armv7m(target);
-
-	if (!is_armv7m(armv7m_target) || armv7m_target->fp_feature == FP_NONE)
-		return false;
-
-	int retval = target_read_u32(target, FPU_CPACR, &cpacr);
-	if (retval != ERROR_OK) {
-		LOG_ERROR("Could not read CPACR register to check FPU state");
-		return false;
-	}
-
-	return cpacr & 0x00F00000;
-}
-
-static const struct rtos_register_stacking *cortexm_select_stackinfo(struct target *target)
-{
-	return cortexm_hasfpu(target) ? &nuttx_stacking_cortex_m_fpu : &nuttx_stacking_cortex_m;
-}
 
 static bool nuttx_detect_rtos(struct target *target)
 {
@@ -164,13 +129,13 @@ static int nuttx_create(struct target *target)
 
 	if (i >= ARRAY_SIZE(nuttx_params_list)) {
 		LOG_ERROR("Could not find \"%s\" target in NuttX compatibility list", target_type_name(target));
-		return JIM_ERR;
+		return ERROR_FAIL;
 	}
 
 	/* We found a target in our list, copy its reference. */
 	target->rtos->rtos_specific_params = (void *)param;
 
-	return JIM_OK;
+	return ERROR_OK;
 }
 
 static int nuttx_smp_init(struct target *target)
@@ -372,29 +337,25 @@ static int nuttx_getreg_current_thread(struct rtos *rtos,
 static int nuttx_getregs_fromstack(struct rtos *rtos, int64_t thread_id,
 	struct rtos_reg **reg_list, int *num_regs)
 {
-	uint16_t xcpreg_off;
+	uint16_t regs_off;
 	uint32_t regsaddr;
 	const struct nuttx_params *priv = rtos->rtos_specific_params;
 	const struct rtos_register_stacking *stacking = priv->stacking;
 
 	if (!stacking) {
-		if (priv->select_stackinfo) {
-			stacking = priv->select_stackinfo(rtos->target);
-		} else {
-			LOG_ERROR("Can't find a way to get stacking info");
-			return ERROR_FAIL;
-		}
+		LOG_ERROR("Can't find a way to get stacking info");
+		return ERROR_FAIL;
 	}
 
 	int ret = target_read_u16(rtos->target,
 		rtos->symbols[NX_SYM_TCB_INFO].address + offsetof(struct tcbinfo, regs_off),
-		&xcpreg_off);
+		&regs_off);
 	if (ret != ERROR_OK) {
 		LOG_ERROR("Failed to read registers' offset: ret = %d", ret);
 		return ERROR_FAIL;
 	}
 
-	ret = target_read_u32(rtos->target, thread_id + xcpreg_off, &regsaddr);
+	ret = target_read_u32(rtos->target, thread_id + regs_off, &regsaddr);
 	if (ret != ERROR_OK) {
 		LOG_ERROR("Failed to read registers' address: ret = %d", ret);
 		return ERROR_FAIL;

@@ -27,12 +27,12 @@ providing documentation, either as part of the C code or stand-alone.
 Feedback would be welcome to improve the OpenOCD guidelines.
 
  */
-/** @page styletcl TCL Style Guide
+/** @page styletcl Tcl Style Guide
 
-OpenOCD needs to expand its Jim/TCL Style Guide.
+OpenOCD needs to expand its Jim Tcl Style Guide.
 
 Many of the guidelines listed on the @ref stylec page should apply to
-OpenOCD's Jim/TCL code as well.
+OpenOCD's Jim Tcl code as well.
 
  */
 /** @page stylec C Style Guide
@@ -96,6 +96,21 @@ OpenOCD project.
       a = 24;
       x = 0;
   }
+  @endcode
+- on <tt> if </tt> statements where the condition is split among multiple
+  lines, increase the indentation of the condition to prevent it to match
+  to the indentation of the <tt> then </tt> block due to length of 'if ('
+  being same of the TAB width of 4 characters. Use:
+  @code
+  if (CMD_ARGC < 3
+          || CMD_ARGC > 8)
+      return ERROR_COMMAND_SYNTAX_ERROR;
+  @endcode
+  instead of:
+  @code
+  if (CMD_ARGC < 3 ||
+      CMD_ARGC > 8)
+      return ERROR_COMMAND_SYNTAX_ERROR;
   @endcode
 
 Finally, try to avoid lines of code that are longer than 72-80 columns:
@@ -209,6 +224,21 @@ if (!buf) {
     return ERROR_FAIL;
 }
 @endcode
+
+@section stylelogging Logging
+
+Logging is intended to provide human-readable information to users.
+Do not confuse logging with the output of commands.
+The latter is intended for the result of a command and should be able to be processed by Tcl scripts.
+
+ - Use one of the following functions to generate log messages, never use `printf()` or similar functions.
+   - Use `LOG_ERROR()` to provide information in case an operation failed in an unrecoverable way. For example, if necessary memory cannot be allocated.
+   - Use `LOG_WARNING()` to inform the user of about an unexpected behavior that can be handled and the intended operation is still be performed. For example, in case a command is deprecated but is nevertheless executed.
+   - Use `LOG_INFO()` to provide insightful or necessary information to the user. For example, features or capabilities of a discovered target.
+   - Use `LOG_DEBUG()` to provide information for troubleshooting. For example, detailed information which makes it easier to debug a specific operation. Try to avoid flooding the log with frequently generated messages. For example, do not use LOG_DEBUG() in operations used for polling the target. Use LOG_DEBUG_IO() for such frequent messages.
+   - Use `LOG_DEBUG_IO()` to provide I/O related information for troubleshooting. For example, details about the communication between OpenOCD and a debug adapter.
+ - If the log message is related to a target, use the corresponding `LOG_TARGET_xxx()` functions.
+ - Do not use a period or exclamation mark at the end of a message.
 
  */
 /** @page styledoxygen Doxygen Style Guide

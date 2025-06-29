@@ -16,6 +16,7 @@
 #include <target/semihosting_common.h>
 #include "esp_xtensa_smp.h"
 #include "esp_xtensa_semihosting.h"
+#include "esp_algorithm.h"
 
 /*
 Multiprocessor stuff common:
@@ -93,8 +94,11 @@ int esp_xtensa_smp_soft_reset_halt(struct target *target)
 	LOG_TARGET_DEBUG(target, "begin");
 	/* in SMP mode we need to ensure that at first we reset SOC on PRO-CPU
 	   and then call xtensa_assert_reset() for all cores */
-	if (target->smp && target->coreid != 0)
-		return ERROR_OK;
+	if (target->smp) {
+		head = list_first_entry(target->smp_targets, struct target_list, lh);
+		if (head->target != target)
+			return ERROR_OK;
+	}
 	/* Reset the SoC first */
 	if (esp_xtensa_smp->chip_ops->reset) {
 		res = esp_xtensa_smp->chip_ops->reset(target);
@@ -214,7 +218,7 @@ int esp_xtensa_smp_poll(struct target *target)
 					!esp_xtensa_smp->other_core_does_resume) {
 					esp_xtensa->semihost.need_resume = false;
 					/* Resume xtensa_resume will handle BREAK instruction. */
-					ret = target_resume(target, 1, 0, 1, 0);
+					ret = target_resume(target, true, 0, true, false);
 					if (ret != ERROR_OK) {
 						LOG_ERROR("Failed to resume target");
 						return ret;
@@ -225,7 +229,7 @@ int esp_xtensa_smp_poll(struct target *target)
 			/* check whether any core polled by esp_xtensa_smp_update_halt_gdb() requested resume */
 			if (target->smp && other_core_resume_req) {
 				/* Resume xtensa_resume will handle BREAK instruction. */
-				ret = target_resume(target, 1, 0, 1, 0);
+				ret = target_resume(target, true, 0, true, false);
 				if (ret != ERROR_OK) {
 					LOG_ERROR("Failed to resume target");
 					return ret;
@@ -330,8 +334,7 @@ static inline int esp_xtensa_smp_smpbreak_restore(struct target *target, uint32_
 }
 
 static int esp_xtensa_smp_resume_cores(struct target *target,
-	int handle_breakpoints,
-	int debug_execution)
+		bool handle_breakpoints, bool debug_execution)
 {
 	struct target_list *head;
 	struct target *curr;
@@ -344,7 +347,7 @@ static int esp_xtensa_smp_resume_cores(struct target *target,
 		if ((curr != target) && (curr->state != TARGET_RUNNING) && target_was_examined(curr)) {
 			/*  resume current address, not in SMP mode */
 			curr->smp = 0;
-			int res = esp_xtensa_smp_resume(curr, 1, 0, handle_breakpoints, debug_execution);
+			int res = esp_xtensa_smp_resume(curr, true, 0, handle_breakpoints, debug_execution);
 			curr->smp = 1;
 			if (res != ERROR_OK)
 				return res;
@@ -354,10 +357,10 @@ static int esp_xtensa_smp_resume_cores(struct target *target,
 }
 
 int esp_xtensa_smp_resume(struct target *target,
-	int current,
+	bool current,
 	target_addr_t address,
-	int handle_breakpoints,
-	int debug_execution)
+	bool handle_breakpoints,
+	bool debug_execution)
 {
 	int res;
 	uint32_t smp_break;
@@ -416,9 +419,9 @@ int esp_xtensa_smp_resume(struct target *target,
 }
 
 int esp_xtensa_smp_step(struct target *target,
-	int current,
+	bool current,
 	target_addr_t address,
-	int handle_breakpoints)
+	bool handle_breakpoints)
 {
 	int res;
 	uint32_t smp_break = 0;
@@ -493,6 +496,83 @@ int esp_xtensa_smp_watchpoint_remove(struct target *target, struct watchpoint *w
 		curr->smp = 1;
 	}
 	return ERROR_OK;
+}
+
+int esp_xtensa_smp_run_func_image(struct target *target, struct esp_algorithm_run_data *run, uint32_t num_args, ...)
+{
+	struct target *run_target = target;
+	struct target_list *head;
+	va_list ap;
+	uint32_t smp_break = 0;
+	int res;
+
+	if (target->smp) {
+		/* find first HALTED and examined core */
+		foreach_smp_target(head, target->smp_targets) {
+			run_target = head->target;
+			if (target_was_examined(run_target) && run_target->state == TARGET_HALTED)
+				break;
+		}
+		if (!head) {
+			LOG_ERROR("Failed to find HALTED core!");
+			return ERROR_FAIL;
+		}
+
+		res = esp_xtensa_smp_smpbreak_disable(run_target, &smp_break);
+		if (res != ERROR_OK)
+			return res;
+	}
+
+	va_start(ap, num_args);
+	int algo_res = esp_algorithm_run_func_image_va(run_target, run, num_args, ap);
+	va_end(ap);
+
+	if (target->smp) {
+		res = esp_xtensa_smp_smpbreak_restore(run_target, smp_break);
+		if (res != ERROR_OK)
+			return res;
+	}
+	return algo_res;
+}
+
+int esp_xtensa_smp_run_onboard_func(struct target *target,
+	struct esp_algorithm_run_data *run,
+	uint32_t func_addr,
+	uint32_t num_args,
+	...)
+{
+	struct target *run_target = target;
+	struct target_list *head;
+	va_list ap;
+	uint32_t smp_break = 0;
+	int res;
+
+	if (target->smp) {
+		/* find first HALTED and examined core */
+		foreach_smp_target(head, target->smp_targets) {
+			run_target = head->target;
+			if (target_was_examined(run_target) && run_target->state == TARGET_HALTED)
+				break;
+		}
+		if (!head) {
+			LOG_ERROR("Failed to find HALTED core!");
+			return ERROR_FAIL;
+		}
+		res = esp_xtensa_smp_smpbreak_disable(run_target, &smp_break);
+		if (res != ERROR_OK)
+			return res;
+	}
+
+	va_start(ap, num_args);
+	int algo_res = esp_algorithm_run_onboard_func_va(run_target, run, func_addr, num_args, ap);
+	va_end(ap);
+
+	if (target->smp) {
+		res = esp_xtensa_smp_smpbreak_restore(run_target, smp_break);
+		if (res != ERROR_OK)
+			return res;
+	}
+	return algo_res;
 }
 
 int esp_xtensa_smp_init_arch_info(struct target *target,
@@ -746,7 +826,7 @@ COMMAND_HANDLER(esp_xtensa_smp_cmd_perfmon_dump)
 		struct target *curr;
 		foreach_smp_target(head, target->smp_targets) {
 			curr = head->target;
-			LOG_INFO("CPU%d:", curr->coreid);
+			LOG_TARGET_INFO(curr, ":");
 			int ret = CALL_COMMAND_HANDLER(xtensa_cmd_perfmon_dump_do,
 				target_to_xtensa(curr));
 			if (ret != ERROR_OK)

@@ -130,8 +130,8 @@ static struct xcf_status read_status(struct flash_bank *bank)
 	jtag_add_ir_scan(bank->target->tap, &scan, TAP_IDLE);
 	jtag_execute_queue();
 
-	ret.isc_error   = ((irdata[0] >> 7) & 3) == 0b01;
-	ret.prog_error  = ((irdata[0] >> 5) & 3) == 0b01;
+	ret.isc_error   = ((irdata[0] >> 7) & 3) == 1;
+	ret.prog_error  = ((irdata[0] >> 5) & 3) == 1;
 	ret.prog_busy   = ((irdata[0] >> 4) & 1) == 0;
 	ret.isc_mode    = ((irdata[0] >> 3) & 1) == 1;
 
@@ -143,28 +143,27 @@ static int isc_enter(struct flash_bank *bank)
 
 	struct xcf_status status = read_status(bank);
 
-	if (true == status.isc_mode)
+	if (status.isc_mode)
 		return ERROR_OK;
-	else {
-		struct scan_field scan;
 
-		scan.check_mask = NULL;
-		scan.check_value = NULL;
-		scan.num_bits = 16;
-		scan.out_value = cmd_isc_enable;
-		scan.in_value = NULL;
+	struct scan_field scan;
 
-		jtag_add_ir_scan(bank->target->tap, &scan, TAP_IDLE);
-		jtag_execute_queue();
+	scan.check_mask = NULL;
+	scan.check_value = NULL;
+	scan.num_bits = 16;
+	scan.out_value = cmd_isc_enable;
+	scan.in_value = NULL;
 
-		status = read_status(bank);
-		if (!status.isc_mode) {
-			LOG_ERROR("*** XCF: FAILED to enter ISC mode");
-			return ERROR_FLASH_OPERATION_FAILED;
-		}
+	jtag_add_ir_scan(bank->target->tap, &scan, TAP_IDLE);
+	jtag_execute_queue();
 
-		return ERROR_OK;
+	status = read_status(bank);
+	if (!status.isc_mode) {
+		LOG_ERROR("*** XCF: FAILED to enter ISC mode");
+		return ERROR_FLASH_OPERATION_FAILED;
 	}
+
+	return ERROR_OK;
 }
 
 static int isc_leave(struct flash_bank *bank)
@@ -174,27 +173,26 @@ static int isc_leave(struct flash_bank *bank)
 
 	if (!status.isc_mode)
 		return ERROR_OK;
-	else {
-		struct scan_field scan;
 
-		scan.check_mask = NULL;
-		scan.check_value = NULL;
-		scan.num_bits = 16;
-		scan.out_value = cmd_isc_disable;
-		scan.in_value = NULL;
+	struct scan_field scan;
 
-		jtag_add_ir_scan(bank->target->tap, &scan, TAP_IDLE);
-		jtag_execute_queue();
-		alive_sleep(1);	/* device needs 50 uS to leave ISC mode */
+	scan.check_mask = NULL;
+	scan.check_value = NULL;
+	scan.num_bits = 16;
+	scan.out_value = cmd_isc_disable;
+	scan.in_value = NULL;
 
-		status = read_status(bank);
-		if (status.isc_mode) {
-			LOG_ERROR("*** XCF: FAILED to leave ISC mode");
-			return ERROR_FLASH_OPERATION_FAILED;
-		}
+	jtag_add_ir_scan(bank->target->tap, &scan, TAP_IDLE);
+	jtag_execute_queue();
+	alive_sleep(1);	/* device needs 50 uS to leave ISC mode */
 
-		return ERROR_OK;
+	status = read_status(bank);
+	if (status.isc_mode) {
+		LOG_ERROR("*** XCF: FAILED to leave ISC mode");
+		return ERROR_FLASH_OPERATION_FAILED;
 	}
+
+	return ERROR_OK;
 }
 
 static int sector_state(uint8_t wrpt, int sector)
@@ -528,7 +526,7 @@ static int isc_program_single_revision_btc(struct flash_bank *bank)
 {
 	uint8_t buf[4];
 	uint32_t btc = 0xFFFFFFFF;
-	btc &= ~0b1111;
+	btc &= ~0xF;
 	btc |= ((bank->num_sectors - 1) << 2);
 	btc &= ~(1 << 4);
 	h_u32_to_le(buf, btc);
@@ -597,7 +595,7 @@ static int xcf_probe(struct flash_bank *bank)
 	}
 
 	/* check idcode and alloc memory for sector table */
-	if (!bank->target->tap->hasidcode)
+	if (!bank->target->tap->has_idcode)
 		return ERROR_FLASH_OPERATION_FAILED;
 
 	/* guess number of blocks using chip ID */

@@ -21,7 +21,7 @@
 /* To achieve C99 printf compatibility in MinGW, gnu_printf should be
  * used for __attribute__((format( ... ))), with GCC v4.4 or later
  */
-#if (defined(IS_MINGW) && (((__GNUC__ << 16) + __GNUC_MINOR__) >= 0x00040004))
+#if (defined(IS_MINGW) && (((__GNUC__ << 16) + __GNUC_MINOR__) >= 0x00040004)) && !defined(__clang__)
 #define PRINTF_ATTRIBUTE_FORMAT gnu_printf
 #else
 #define PRINTF_ATTRIBUTE_FORMAT printf
@@ -77,8 +77,9 @@ struct command_invocation {
 	struct command_context *ctx;
 	struct command *current;
 	const char *name;
-	unsigned argc;
+	unsigned int argc;
 	const char **argv;
+	Jim_Obj * const *jimtcl_argv;
 	Jim_Obj *output;
 };
 
@@ -154,6 +155,11 @@ void *jimcmd_privdata(Jim_Cmd *cmd);
  */
 #define CMD_ARGV (cmd->argv)
 /**
+ * Use this macro to access the jimtcl arguments for the command being
+ * handled, rather than accessing the variable directly.  It may be moved.
+ */
+#define CMD_JIMTCL_ARGV (cmd->jimtcl_argv)
+/**
  * Use this macro to access the name of the command being handled,
  * rather than accessing the variable directly.  It may be moved.
  */
@@ -191,7 +197,6 @@ typedef __COMMAND_HANDLER((*command_handler_t));
 struct command {
 	char *name;
 	command_handler_t handler;
-	Jim_CmdProc *jim_handler;
 	void *jim_handler_data;
 		/* Command handlers can use it for any handler specific data */
 	struct target *jim_override_target;
@@ -228,7 +233,6 @@ static inline struct command *jim_to_command(Jim_Interp *interp)
 struct command_registration {
 	const char *name;
 	command_handler_t handler;
-	Jim_CmdProc *jim_handler;
 	enum command_mode mode;
 	const char *help;
 	/** a string listing the options and arguments, required or optional */
@@ -408,7 +412,7 @@ int parse_llong(const char *str, long long *ul);
 #define DECLARE_PARSE_WRAPPER(name, type) \
 		int parse ## name(const char *str, type * ul)
 
-DECLARE_PARSE_WRAPPER(_uint, unsigned);
+DECLARE_PARSE_WRAPPER(_uint, unsigned int);
 DECLARE_PARSE_WRAPPER(_u64, uint64_t);
 DECLARE_PARSE_WRAPPER(_u32, uint32_t);
 DECLARE_PARSE_WRAPPER(_u16, uint16_t);
@@ -510,6 +514,15 @@ DECLARE_PARSE_WRAPPER(_target_addr, target_addr_t);
 
 int command_parse_bool_arg(const char *in, bool *out);
 COMMAND_HELPER(handle_command_parse_bool, bool *out, const char *label);
+
+/**
+ * Parse a number (base 10, base 16 or base 8) and store the result
+ * into a bit buffer. Use the prefixes '0' and '0x' for base 8 and 16,
+ * otherwise defaults to base 10.
+ *
+ * In case of parsing error, a user-readable error message is produced.
+ */
+COMMAND_HELPER(command_parse_str_to_buf, const char *str, void *buf, unsigned int buf_len);
 
 /** parses an on/off command argument */
 #define COMMAND_PARSE_ON_OFF(in, out) \

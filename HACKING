@@ -92,6 +92,22 @@ patch:
   make
   @endcode
 
+- Code coverage analysis
+
+  By inspecting the code coverage, you can identify potential gaps in your testing
+  and use that information to improve your test scenarios.
+
+  Example usage:
+  @code
+  mkdir build-gcov; cd build-gcov
+  ../configure --enable-gcov [...]
+  make
+  # ... Now execute your test scenarios to collect OpenOCD code coverage ...
+  lcov --capture --directory ./src --output-file openocd-coverage.info
+  genhtml openocd-coverage.info --output-directory coverage_report
+  # ... Open coverage_report/index.html in a web browser ...
+  @endcode
+
 Please consider performing these additional checks where appropriate
 (especially Clang Static Analyzer for big portions of new code) and
 mention the results (e.g. "Valgrind-clean, no new Clang analyzer
@@ -153,11 +169,9 @@ git remote add review https://USERNAME:PASSWORD@review.openocd.org/p/openocd.git
 Gerrit server, even if you plan to use several local branches for different
 topics. It is possible because @c for/master is not a traditional Git
 branch.
-  -# You will need to install this hook, we will look into a better solution:
-@code
-scp -p -P 29418 USERNAME@review.openocd.org:hooks/commit-msg .git/hooks/
-@endcode
-  Or with http only:
+  -# You will need to install this hook to automatically add the
+     field "Change-Id:" in the commit message, as required by Gerrit.
+     We will look into a better solution:
 @code
 wget https://review.openocd.org/tools/hooks/commit-msg
 mv commit-msg .git/hooks
@@ -234,6 +248,12 @@ doc: fix typos
 @code
 git pull --rebase origin master
 @endcode
+
+-# When you create a new version of an old patch, check that the new patch
+   keeps the same 'Change-Id:' field of the old patch.
+   This allows the Gerrit server to recognize the patch as a new version of
+   the older one and keeps track of the history and the review process.
+
 -# Send the patches to the Gerrit server for review:
 @code
 git push review
@@ -291,6 +311,13 @@ Only for <em>exceptional cases</em>, it is allowed to submit patches
 to Gerrit with the special field 'Checkpatch-ignore:' in the commit
 message. This field will cause checkpatch to ignore the error types
 listed in the field, only for the patch itself.
+For errors in the commit message, the special field has to be put in
+the commit message before the line that produces the error.
+The special field must be added <em>before</em> the 'Signed-off-by:'
+line, otherwise it is ignored.
+To ignore multiple errors, either add multiple lines with the special
+field or add multiple error types, separated by space or commas, in a
+single line.
 The error type is printed by checkpatch on failure.
 For example the names of Windows APIs mix lower and upper case chars,
 in violation of OpenOCD coding style, triggering a 'CAMELCASE' error:

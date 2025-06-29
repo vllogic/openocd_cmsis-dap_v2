@@ -36,7 +36,7 @@
 #define ARMV7M_SCS_DCRSR	DCB_DCRSR
 #define ARMV7M_SCS_DCRDR	DCB_DCRDR
 
-static inline struct hl_interface_s *target_to_adapter(struct target *target)
+static inline struct hl_interface *target_to_adapter(struct target *target)
 {
 	return target->tap->priv;
 }
@@ -44,14 +44,14 @@ static inline struct hl_interface_s *target_to_adapter(struct target *target)
 static int adapter_load_core_reg_u32(struct target *target,
 		uint32_t regsel, uint32_t *value)
 {
-	struct hl_interface_s *adapter = target_to_adapter(target);
+	struct hl_interface *adapter = target_to_adapter(target);
 	return adapter->layout->api->read_reg(adapter->handle, regsel, value);
 }
 
 static int adapter_store_core_reg_u32(struct target *target,
 		uint32_t regsel, uint32_t value)
 {
-	struct hl_interface_s *adapter = target_to_adapter(target);
+	struct hl_interface *adapter = target_to_adapter(target);
 	return adapter->layout->api->write_reg(adapter->handle, regsel, value);
 }
 
@@ -65,7 +65,7 @@ static int adapter_examine_debug_reason(struct target *target)
 	return ERROR_OK;
 }
 
-static int hl_dcc_read(struct hl_interface_s *hl_if, uint8_t *value, uint8_t *ctrl)
+static int hl_dcc_read(struct hl_interface *hl_if, uint8_t *value, uint8_t *ctrl)
 {
 	uint16_t dcrdr;
 	int retval = hl_if->layout->api->read_mem(hl_if->handle,
@@ -90,7 +90,7 @@ static int hl_dcc_read(struct hl_interface_s *hl_if, uint8_t *value, uint8_t *ct
 static int hl_target_request_data(struct target *target,
 	uint32_t size, uint8_t *buffer)
 {
-	struct hl_interface_s *hl_if = target_to_adapter(target);
+	struct hl_interface *hl_if = target_to_adapter(target);
 	uint8_t data;
 	uint8_t ctrl;
 	uint32_t i;
@@ -113,7 +113,7 @@ static int hl_handle_target_request(void *priv)
 
 	if (!target_was_examined(target))
 		return ERROR_OK;
-	struct hl_interface_s *hl_if = target_to_adapter(target);
+	struct hl_interface *hl_if = target_to_adapter(target);
 
 	if (!target->dbg_msg_enabled)
 		return ERROR_OK;
@@ -187,8 +187,7 @@ static int adapter_init_target(struct command_context *cmd_ctx,
 	return ERROR_OK;
 }
 
-static int adapter_target_create(struct target *target,
-		Jim_Interp *interp)
+static int adapter_target_create(struct target *target)
 {
 	LOG_DEBUG("%s", __func__);
 	struct adiv5_private_config *pc = target->private_config;
@@ -227,7 +226,7 @@ static int adapter_load_context(struct target *target)
 
 static int adapter_debug_entry(struct target *target)
 {
-	struct hl_interface_s *adapter = target_to_adapter(target);
+	struct hl_interface *adapter = target_to_adapter(target);
 	struct armv7m_common *armv7m = target_to_armv7m(target);
 	struct arm *arm = &armv7m->arm;
 	struct reg *r;
@@ -258,7 +257,7 @@ static int adapter_debug_entry(struct target *target)
 		arm->core_mode = ARM_MODE_HANDLER;
 		arm->map = armv7m_msp_reg_map;
 	} else {
-		unsigned control = buf_get_u32(arm->core_cache
+		unsigned int control = buf_get_u32(arm->core_cache
 				->reg_list[ARMV7M_CONTROL].value, 0, 3);
 
 		/* is this thread privileged? */
@@ -286,7 +285,7 @@ static int adapter_debug_entry(struct target *target)
 static int adapter_poll(struct target *target)
 {
 	enum target_state state;
-	struct hl_interface_s *adapter = target_to_adapter(target);
+	struct hl_interface *adapter = target_to_adapter(target);
 	struct armv7m_common *armv7m = target_to_armv7m(target);
 	enum target_state prev_target_state = target->state;
 
@@ -329,7 +328,7 @@ static int adapter_poll(struct target *target)
 static int hl_assert_reset(struct target *target)
 {
 	int res = ERROR_OK;
-	struct hl_interface_s *adapter = target_to_adapter(target);
+	struct hl_interface *adapter = target_to_adapter(target);
 	struct armv7m_common *armv7m = target_to_armv7m(target);
 	bool use_srst_fallback = true;
 
@@ -406,13 +405,14 @@ static int hl_deassert_reset(struct target *target)
 
 	target->SAVED_DCRDR = 0;  /* clear both DCC busy bits on initial resume */
 
-	return target->reset_halt ? ERROR_OK : target_resume(target, 1, 0, 0, 0);
+	return target->reset_halt ? ERROR_OK : target_resume(target, true, 0, false,
+		false);
 }
 
 static int adapter_halt(struct target *target)
 {
 	int res;
-	struct hl_interface_s *adapter = target_to_adapter(target);
+	struct hl_interface *adapter = target_to_adapter(target);
 
 	LOG_DEBUG("%s", __func__);
 
@@ -434,12 +434,12 @@ static int adapter_halt(struct target *target)
 	return ERROR_OK;
 }
 
-static int adapter_resume(struct target *target, int current,
-		target_addr_t address, int handle_breakpoints,
-		int debug_execution)
+static int adapter_resume(struct target *target, bool current,
+		target_addr_t address, bool handle_breakpoints,
+		bool debug_execution)
 {
 	int res;
-	struct hl_interface_s *adapter = target_to_adapter(target);
+	struct hl_interface *adapter = target_to_adapter(target);
 	struct armv7m_common *armv7m = target_to_armv7m(target);
 	uint32_t resume_pc;
 	struct breakpoint *breakpoint = NULL;
@@ -525,11 +525,11 @@ static int adapter_resume(struct target *target, int current,
 	return ERROR_OK;
 }
 
-static int adapter_step(struct target *target, int current,
-		target_addr_t address, int handle_breakpoints)
+static int adapter_step(struct target *target, bool current,
+		target_addr_t address, bool handle_breakpoints)
 {
 	int res;
-	struct hl_interface_s *adapter = target_to_adapter(target);
+	struct hl_interface *adapter = target_to_adapter(target);
 	struct armv7m_common *armv7m = target_to_armv7m(target);
 	struct breakpoint *breakpoint = NULL;
 	struct reg *pc = armv7m->arm.pc;
@@ -593,7 +593,7 @@ static int adapter_read_memory(struct target *target, target_addr_t address,
 		uint32_t size, uint32_t count,
 		uint8_t *buffer)
 {
-	struct hl_interface_s *adapter = target_to_adapter(target);
+	struct hl_interface *adapter = target_to_adapter(target);
 
 	if (!count || !buffer)
 		return ERROR_COMMAND_SYNTAX_ERROR;
@@ -608,7 +608,7 @@ static int adapter_write_memory(struct target *target, target_addr_t address,
 		uint32_t size, uint32_t count,
 		const uint8_t *buffer)
 {
-	struct hl_interface_s *adapter = target_to_adapter(target);
+	struct hl_interface *adapter = target_to_adapter(target);
 
 	if (!count || !buffer)
 		return ERROR_COMMAND_SYNTAX_ERROR;

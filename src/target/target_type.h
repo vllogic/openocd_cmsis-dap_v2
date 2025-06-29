@@ -42,10 +42,10 @@ struct target_type {
 	/* halt will log a warning, but return ERROR_OK if the target is already halted. */
 	int (*halt)(struct target *target);
 	/* See target.c target_resume() for documentation. */
-	int (*resume)(struct target *target, int current, target_addr_t address,
-			int handle_breakpoints, int debug_execution);
-	int (*step)(struct target *target, int current, target_addr_t address,
-			int handle_breakpoints);
+	int (*resume)(struct target *target, bool current, target_addr_t address,
+			bool handle_breakpoints, bool debug_execution);
+	int (*step)(struct target *target, bool current, target_addr_t address,
+			bool handle_breakpoints);
 	/* target reset control. assert reset can be invoked when OpenOCD and
 	 * the target is out of sync.
 	 *
@@ -83,7 +83,7 @@ struct target_type {
 	 * if dynamic allocation is used for this value, it must be managed by
 	 * the target, ideally by caching the result for subsequent calls.
 	 */
-	const char *(*get_gdb_arch)(struct target *target);
+	const char *(*get_gdb_arch)(const struct target *target);
 
 	/**
 	 * Target register access for GDB.  Do @b not call this function
@@ -194,16 +194,12 @@ struct target_type {
 	const struct command_registration *commands;
 
 	/* called when target is created */
-	int (*target_create)(struct target *target, Jim_Interp *interp);
+	int (*target_create)(struct target *target);
 
 	/* called for various config parameters */
 	/* returns JIM_CONTINUE - if option not understood */
 	/* otherwise: JIM_OK, or JIM_ERR, */
 	int (*target_jim_configure)(struct target *target, struct jim_getopt_info *goi);
-
-	/* target commands specifically handled by the target */
-	/* returns JIM_OK, or JIM_ERR, or JIM_CONTINUE - if option not understood */
-	int (*target_jim_commands)(struct target *target, struct jim_getopt_info *goi);
 
 	/**
 	 * This method is used to perform target setup that requires
@@ -303,7 +299,7 @@ struct target_type {
 	/* Return the number of address bits this target supports. This will
 	 * typically be 32 for 32-bit targets, and 64 for 64-bit targets. If not
 	 * implemented, it's assumed to be 32. */
-	unsigned (*address_bits)(struct target *target);
+	unsigned int (*address_bits)(struct target *target);
 
 	/* Return the number of system bus data bits this target supports. This
 	 * will typically be 32 for 32-bit targets, and 64 for 64-bit targets. If

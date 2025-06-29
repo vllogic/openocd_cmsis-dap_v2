@@ -45,13 +45,15 @@ struct pa_list {
 
 struct pracc_queue_info {
 	struct mips_ejtag *ejtag_info;
-	unsigned isa;
+	unsigned int isa;
 	int retval;
 	int code_count;
 	int store_count;
 	int max_code;		/* max instructions with currently allocated memory */
 	struct pa_list *pracc_list;	/* Code and store addresses at dmseg */
 };
+
+struct mips32_common;
 
 void pracc_queue_init(struct pracc_queue_info *ctx);
 void pracc_add(struct pracc_queue_info *ctx, uint32_t addr, uint32_t instr);
@@ -100,6 +102,21 @@ int mips32_cp0_read(struct mips_ejtag *ejtag_info,
  */
 int mips32_cp0_write(struct mips_ejtag *ejtag_info,
 		uint32_t val, uint32_t cp0_reg, uint32_t cp0_sel);
+
+/**
+ * mips32_cp1_control_read
+ *
+ * @brief Simulates cfc1 ASM instruction (Move Control Word From Floating Point),
+ * i.e. implements copro C1 Control Register read.
+ *
+ * @param[in] ejtag_info
+ * @param[in] val Storage to hold read value
+ * @param[in] cp1_c_reg Number of copro C1 control register we want to read
+ *
+ * @return ERROR_OK on Success, ERROR_FAIL otherwise
+ */
+int mips32_cp1_control_read(struct mips_ejtag *ejtag_info,
+		uint32_t *val, uint32_t cp1_c_reg);
 
 static inline void pracc_swap16_array(struct mips_ejtag *ejtag_info, uint32_t *buf, int count)
 {

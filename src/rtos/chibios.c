@@ -15,7 +15,6 @@
 #include <helper/time_support.h>
 #include <jtag/jtag.h>
 #include "target/target.h"
-#include "target/target_type.h"
 #include "target/armv7m.h"
 #include "target/cortex_m.h"
 #include "rtos.h"
@@ -32,7 +31,7 @@ struct chibios_chdebug {
 	char      ch_identifier[4];       /**< @brief Always set to "main".       */
 	uint8_t   ch_zero;                /**< @brief Must be zero.               */
 	uint8_t   ch_size;                /**< @brief Size of this structure.     */
-	uint16_t  ch_version;             /**< @brief Encoded ChibiOS/RT version. */
+	uint8_t   ch_version[2];          /**< @brief Encoded ChibiOS/RT version. */
 	uint8_t   ch_ptrsize;             /**< @brief Size of a pointer.          */
 	uint8_t   ch_timesize;            /**< @brief Size of a @p systime_t.     */
 	uint8_t   ch_threadsize;          /**< @brief Size of a @p Thread struct. */
@@ -172,13 +171,7 @@ static int chibios_update_memory_signature(struct rtos *rtos)
 					" expected. Assuming compatibility...");
 	}
 
-	/* Convert endianness of version field */
-	const uint8_t *versiontarget = (const uint8_t *)
-										&signature->ch_version;
-	signature->ch_version = rtos->target->endianness == TARGET_LITTLE_ENDIAN ?
-			le_to_h_u32(versiontarget) : be_to_h_u32(versiontarget);
-
-	const uint16_t ch_version = signature->ch_version;
+	const uint16_t ch_version = target_buffer_get_u16(rtos->target, signature->ch_version);
 	LOG_INFO("Successfully loaded memory map of ChibiOS/RT target "
 			"running version %i.%i.%i", GET_CH_KERNEL_MAJOR(ch_version),
 			GET_CH_KERNEL_MINOR(ch_version), GET_CH_KERNEL_PATCH(ch_version));
@@ -428,9 +421,11 @@ static int chibios_update_threads(struct rtos *rtos)
 		else
 			state_desc = "Unknown";
 
-		curr_thrd_details->extra_info_str = malloc(strlen(
-					state_desc)+8);
-		sprintf(curr_thrd_details->extra_info_str, "State: %s", state_desc);
+		curr_thrd_details->extra_info_str = alloc_printf("State: %s", state_desc);
+		if (!curr_thrd_details->extra_info_str) {
+			LOG_ERROR("Could not allocate space for thread state description");
+			return -1;
+		}
 
 		curr_thrd_details->exists = true;
 
@@ -470,7 +465,7 @@ static int chibios_get_thread_reg_list(struct rtos *rtos, int64_t thread_id,
 	/* Update stacking if it can only be determined from runtime information */
 	if (!param->stacking_info &&
 		(chibios_update_stacking(rtos) != ERROR_OK)) {
-		LOG_ERROR("Failed to determine exact stacking for the target type %s", rtos->target->type->name);
+		LOG_ERROR("Failed to determine exact stacking for the target type %s", target_type_name(rtos->target));
 		return -1;
 	}
 
@@ -518,12 +513,12 @@ static bool chibios_detect_rtos(struct target *target)
 static int chibios_create(struct target *target)
 {
 	for (unsigned int i = 0; i < ARRAY_SIZE(chibios_params_list); i++)
-		if (strcmp(chibios_params_list[i].target_name, target->type->name) == 0) {
+		if (strcmp(chibios_params_list[i].target_name, target_type_name(target)) == 0) {
 			target->rtos->rtos_specific_params = (void *)&chibios_params_list[i];
-			return 0;
+			return ERROR_OK;
 		}
 
 	LOG_WARNING("Could not find target \"%s\" in ChibiOS compatibility "
-				"list", target->type->name);
-	return -1;
+				"list", target_type_name(target));
+	return ERROR_FAIL;
 }

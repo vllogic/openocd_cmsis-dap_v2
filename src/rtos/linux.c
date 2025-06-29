@@ -624,7 +624,7 @@ static struct threads *liste_add_task(struct threads *task_list, struct threads 
 {
 	t->next = NULL;
 
-	if (!*last)
+	if (!*last) {
 		if (!task_list) {
 			task_list = t;
 			return task_list;
@@ -637,7 +637,8 @@ static struct threads *liste_add_task(struct threads *task_list, struct threads 
 			temp->next = t;
 			*last = t;
 			return task_list;
-		} else {
+		}
+	} else {
 		(*last)->next = t;
 		*last = t;
 		return task_list;
@@ -1039,6 +1040,10 @@ static int linux_gdb_thread_packet(struct target *target,
 		return ERROR_TARGET_FAILURE;
 
 	char *out_str = calloc(MAX_THREADS * 17 + 10, 1);
+	if (!out_str) {
+		LOG_ERROR("Out of memory");
+		return ERROR_FAIL;
+	}
 	char *tmp_str = out_str;
 	tmp_str += sprintf(tmp_str, "m");
 	struct threads *temp = linux_os->thread_list;
@@ -1115,23 +1120,13 @@ static int linux_thread_extra_info(struct target *target,
 
 	while (temp) {
 		if (temp->threadid == threadid) {
-			char *pid = " PID: ";
-			char *pid_current = "*PID: ";
-			char *name = "Name: ";
-			int str_size = strlen(pid) + strlen(name);
-			char *tmp_str = calloc(1, str_size + 50);
-			char *tmp_str_ptr = tmp_str;
-
-			/*  discriminate current task */
-			if (temp->status == 3)
-				tmp_str_ptr += sprintf(tmp_str_ptr, "%s",
-						pid_current);
-			else
-				tmp_str_ptr += sprintf(tmp_str_ptr, "%s", pid);
-
-			tmp_str_ptr += sprintf(tmp_str_ptr, "%d, ", (int)temp->pid);
-			sprintf(tmp_str_ptr, "%s", name);
-			sprintf(tmp_str_ptr, "%s", temp->name);
+			char *tmp_str = alloc_printf("%cPID: %" PRIu32 ", Name: %s",
+					temp->status == 3 ? '*' : ' ',
+					temp->pid, temp->name);
+			if (!tmp_str) {
+				LOG_ERROR("Out of memory");
+				return ERROR_FAIL;
+			}
 			char *hex_str = calloc(1, strlen(tmp_str) * 2 + 1);
 			size_t pkt_len = hexify(hex_str, (const uint8_t *)tmp_str,
 				strlen(tmp_str), strlen(tmp_str) * 2 + 1);
@@ -1429,7 +1424,7 @@ static int linux_os_create(struct target *target)
 	/*  initialize a default virt 2 phys translation */
 	os_linux->phys_mask = ~0xc0000000;
 	os_linux->phys_base = 0x0;
-	return JIM_OK;
+	return ERROR_OK;
 }
 
 static char *linux_ps_command(struct target *target)

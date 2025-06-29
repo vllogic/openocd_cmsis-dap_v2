@@ -782,7 +782,7 @@ static int kitprog_swd_run_queue(void)
 			if (ack != SWD_ACK_OK || (buffer[read_index] & 0x08)) {
 				LOG_DEBUG("SWD ack not OK: %d %s", i,
 					  ack == SWD_ACK_WAIT ? "WAIT" : ack == SWD_ACK_FAULT ? "FAULT" : "JUNK");
-				queued_retval = ack == SWD_ACK_WAIT ? ERROR_WAIT : ERROR_FAIL;
+				queued_retval = swd_ack_to_error_code(ack);
 				break;
 			}
 			read_index++;
@@ -908,11 +908,10 @@ static const struct swd_driver kitprog_swd = {
 	.run = kitprog_swd_run_queue,
 };
 
-static const char * const kitprog_transports[] = { "swd", NULL };
-
 struct adapter_driver kitprog_adapter_driver = {
 	.name = "kitprog",
-	.transports = kitprog_transports,
+	.transport_ids = TRANSPORT_SWD,
+	.transport_preferred_id = TRANSPORT_SWD,
 	.commands = kitprog_command_handlers,
 
 	.init = kitprog_init,

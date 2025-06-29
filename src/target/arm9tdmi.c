@@ -765,7 +765,7 @@ int arm9tdmi_init_arch_info(struct target *target,
 	return ERROR_OK;
 }
 
-static int arm9tdmi_target_create(struct target *target, Jim_Interp *interp)
+static int arm9tdmi_target_create(struct target *target)
 {
 	struct arm7_9_common *arm7_9 = calloc(1, sizeof(struct arm7_9_common));
 
@@ -821,9 +821,9 @@ COMMAND_HANDLER(handle_arm9tdmi_catch_vectors_command)
 		else if (strcmp(CMD_ARGV[0], "none") == 0) {
 			/* do nothing */
 		} else {
-			for (unsigned i = 0; i < CMD_ARGC; i++) {
+			for (unsigned int i = 0; i < CMD_ARGC; i++) {
 				/* go through list of vectors */
-				unsigned j;
+				unsigned int j;
 				for (j = 0; arm9tdmi_vectors[j].name; j++) {
 					if (strcmp(CMD_ARGV[i], arm9tdmi_vectors[j].name) == 0) {
 						vector_catch_value |= arm9tdmi_vectors[j].value;
@@ -850,7 +850,7 @@ COMMAND_HANDLER(handle_arm9tdmi_catch_vectors_command)
 	}
 
 	/* output current settings */
-	for (unsigned i = 0; arm9tdmi_vectors[i].name; i++) {
+	for (unsigned int i = 0; arm9tdmi_vectors[i].name; i++) {
 		command_print(CMD, "%s: %s", arm9tdmi_vectors[i].name,
 			(vector_catch_value & arm9tdmi_vectors[i].value)
 				? "catch" : "don't catch");

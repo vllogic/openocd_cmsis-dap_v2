@@ -380,8 +380,8 @@ static int osbdm_quit(void)
 
 static int osbdm_add_pathmove(
 	struct queue *queue,
-	tap_state_t *path,
-	int num_states)
+	enum tap_state *path,
+	unsigned int num_states)
 {
 	assert(num_states <= 32);
 
@@ -392,7 +392,7 @@ static int osbdm_add_pathmove(
 	}
 
 	uint32_t tms = 0;
-	for (int i = 0; i < num_states; i++) {
+	for (unsigned int i = 0; i < num_states; i++) {
 		if (tap_state_transition(tap_get_state(), 1) == path[i]) {
 			tms |= (1 << i);
 		} else if (tap_state_transition(tap_get_state(), 0) == path[i]) {
@@ -415,7 +415,7 @@ static int osbdm_add_pathmove(
 
 static int osbdm_add_statemove(
 	struct queue *queue,
-	tap_state_t new_state,
+	enum tap_state new_state,
 	int skip_first)
 {
 	int len = 0;
@@ -451,7 +451,7 @@ static int osbdm_add_statemove(
 
 static int osbdm_add_stableclocks(
 	struct queue *queue,
-	int count)
+	unsigned int count)
 {
 	if (!tap_is_state_stable(tap_get_state())) {
 		LOG_ERROR("BUG: current state (%s) is not stable",
@@ -489,8 +489,8 @@ static int osbdm_add_tms(
 static int osbdm_add_scan(
 	struct queue *queue,
 	struct scan_field *fields,
-	int num_fields,
-	tap_state_t end_state,
+	unsigned int num_fields,
+	enum tap_state end_state,
 	bool ir_scan)
 {
 	/* Move to desired shift state */
@@ -508,7 +508,7 @@ static int osbdm_add_scan(
 
 	/* Add scan */
 	tap_set_end_state(end_state);
-	for (int idx = 0; idx < num_fields; idx++) {
+	for (unsigned int idx = 0; idx < num_fields; idx++) {
 		struct sequence *next = queue_add_tail(queue, fields[idx].num_bits);
 		if (!next) {
 			LOG_ERROR("Can't allocate bit sequence");
@@ -536,8 +536,8 @@ static int osbdm_add_scan(
 
 static int osbdm_add_runtest(
 	struct queue *queue,
-	int num_cycles,
-	tap_state_t end_state)
+	unsigned int num_cycles,
+	enum tap_state end_state)
 {
 	if (osbdm_add_statemove(queue, TAP_IDLE, 0) != ERROR_OK)
 		return ERROR_FAIL;
@@ -628,7 +628,7 @@ static int osbdm_execute_command(
 	return retval;
 }
 
-static int osbdm_execute_queue(void)
+static int osbdm_execute_queue(struct jtag_command *cmd_queue)
 {
 	int retval = ERROR_OK;
 
@@ -637,7 +637,7 @@ static int osbdm_execute_queue(void)
 		LOG_ERROR("BUG: can't allocate bit queue");
 		retval = ERROR_FAIL;
 	} else {
-		struct jtag_command *cmd = jtag_command_queue;
+		struct jtag_command *cmd = cmd_queue;
 
 		while (retval == ERROR_OK && cmd) {
 			retval = osbdm_execute_command(&osbdm_context, queue, cmd);
@@ -684,7 +684,8 @@ static struct jtag_interface osbdm_interface = {
 
 struct adapter_driver osbdm_adapter_driver = {
 	.name = "osbdm",
-	.transports = jtag_only,
+	.transport_ids = TRANSPORT_JTAG,
+	.transport_preferred_id = TRANSPORT_JTAG,
 
 	.init = osbdm_init,
 	.quit = osbdm_quit,

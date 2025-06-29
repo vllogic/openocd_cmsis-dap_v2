@@ -24,6 +24,7 @@
 #include "image.h"
 #include "target.h"
 #include <helper/log.h>
+#include <server/server.h>
 
 /* convert ELF header field to host endianness */
 #define field16(elf, field) \
@@ -194,7 +195,7 @@ static int image_ihex_buffer_complete_inner(struct image *image,
 				}
 
 				while (count-- > 0) {
-					unsigned value;
+					unsigned int value;
 					sscanf(&lpsz_line[bytes_read], "%2x", &value);
 					ihex->buffer[cooked_bytes] = (uint8_t)value;
 					cal_checksum += (uint8_t)ihex->buffer[cooked_bytes];
@@ -863,7 +864,7 @@ static int image_mot_buffer_complete_inner(struct image *image,
 				}
 
 				while (count-- > 0) {
-					unsigned value;
+					unsigned int value;
 					sscanf(&lpsz_line[bytes_read], "%2x", &value);
 					mot->buffer[cooked_bytes] = (uint8_t)value;
 					cal_checksum += (uint8_t)mot->buffer[cooked_bytes];
@@ -1295,6 +1296,8 @@ int image_calculate_checksum(const uint8_t *buffer, uint32_t nbytes, uint32_t *c
 			crc = (crc << 8) ^ crc32_table[((crc >> 24) ^ *buffer++) & 255];
 		}
 		keep_alive();
+		if (openocd_is_shutdown_pending())
+			return ERROR_SERVER_INTERRUPTED;
 	}
 
 	LOG_DEBUG("Calculating checksum done; checksum=0x%" PRIx32, crc);

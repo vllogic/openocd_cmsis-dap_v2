@@ -303,12 +303,14 @@ int parse_cmdline_args(struct command_context *cmd_ctx, int argc, char *argv[])
 				break;
 			}
 			case 'l':		/* --log_output | -l */
-				if (optarg)
-					command_run_linef(cmd_ctx, "log_output %s", optarg);
+			{
+				int retval = command_run_linef(cmd_ctx, "log_output %s", optarg);
+				if (retval != ERROR_OK)
+					return retval;
 				break;
+			}
 			case 'c':		/* --command | -c */
-				if (optarg)
-				    add_config_command(optarg);
+				add_config_command(optarg);
 				break;
 			default:  /* '?' */
 				/* getopt will emit an error message, all we have to do is bail. */
@@ -332,7 +334,7 @@ int parse_cmdline_args(struct command_context *cmd_ctx, int argc, char *argv[])
 		LOG_OUTPUT("             | -d<n>\tset debug level to <level>\n");
 		LOG_OUTPUT("--log_output | -l\tredirect log output to file <name>\n");
 		LOG_OUTPUT("--command    | -c\trun <command>\n");
-		exit(-1);
+		exit(0);
 	}
 
 	if (version_flag) {
@@ -340,6 +342,10 @@ int parse_cmdline_args(struct command_context *cmd_ctx, int argc, char *argv[])
 		/* It is not an error to request the VERSION number. */
 		exit(0);
 	}
+
+	/* dump full command line */
+	for (int i = 0; i < argc; i++)
+		LOG_DEBUG("ARGV[%d] = \"%s\"", i, argv[i]);
 
 	/* paths specified on the command line take precedence over these
 	 * built-in paths

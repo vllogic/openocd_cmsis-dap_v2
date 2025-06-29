@@ -15,12 +15,10 @@
 struct target;
 /** */
 enum e_hl_transports;
-/** */
-extern const char *hl_transports[];
 
 #define HLA_MAX_USB_IDS 16
 
-struct hl_interface_param_s {
+struct hl_interface_param {
 	/** */
 	const char *device_desc;
 	/** List of recognised VIDs */
@@ -31,17 +29,15 @@ struct hl_interface_param_s {
 	enum hl_transports transport;
 	/** */
 	bool connect_under_reset;
-	/** Initial interface clock clock speed */
-	int initial_interface_speed;
 	/** */
 	bool use_stlink_tcp;
 	/** */
 	uint16_t stlink_tcp_port;
 };
 
-struct hl_interface_s {
+struct hl_interface {
 	/** */
-	struct hl_interface_param_s param;
+	struct hl_interface_param param;
 	/** */
 	const struct hl_layout *layout;
 	/** */

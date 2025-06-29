@@ -13,7 +13,6 @@
 #include <helper/time_support.h>
 #include <jtag/jtag.h>
 #include "target/target.h"
-#include "target/target_type.h"
 #include "rtos.h"
 #include "helper/log.h"
 #include "helper/types.h"
@@ -249,14 +248,14 @@ static int mqx_create(
 {
 	/* check target name against supported architectures */
 	for (unsigned int i = 0; i < ARRAY_SIZE(mqx_params_list); i++) {
-		if (strcmp(mqx_params_list[i].target_name, target->type->name) == 0) {
+		if (strcmp(mqx_params_list[i].target_name, target_type_name(target)) == 0) {
 			target->rtos->rtos_specific_params = (void *)&mqx_params_list[i];
-			/* LOG_DEBUG("MQX RTOS - valid architecture: %s", target->type->name); */
-			return 0;
+			/* LOG_DEBUG("MQX RTOS - valid architecture: %s", target_type_name(target)); */
+			return ERROR_OK;
 		}
 	}
-	LOG_ERROR("MQX RTOS - could not find target \"%s\" in MQX compatibility list", target->type->name);
-	return -1;
+	LOG_ERROR("MQX RTOS - could not find target \"%s\" in MQX compatibility list", target_type_name(target));
+	return ERROR_FAIL;
 }
 
 /*
@@ -320,7 +319,7 @@ static int mqx_update_threads(
 		i < (uint32_t)rtos->thread_count;
 		i++
 	) {
-		uint8_t task_name[MQX_THREAD_NAME_LENGTH + 1];
+		char task_name[MQX_THREAD_NAME_LENGTH + 1];
 		uint32_t task_addr = 0, task_template = 0, task_state = 0;
 		uint32_t task_name_addr = 0, task_id = 0, task_errno = 0;
 		uint32_t state_index = 0;
@@ -381,10 +380,9 @@ static int mqx_update_threads(
 		rtos->thread_details[i].threadid = task_id;
 		rtos->thread_details[i].exists = true;
 		/* set thread name */
-		rtos->thread_details[i].thread_name_str = malloc(strlen((void *)task_name) + 1);
+		rtos->thread_details[i].thread_name_str = strdup(task_name);
 		if (!rtos->thread_details[i].thread_name_str)
 			return ERROR_FAIL;
-		strcpy(rtos->thread_details[i].thread_name_str, (void *)task_name);
 		/* set thread extra info
 		 * - task state
 		 * - task address

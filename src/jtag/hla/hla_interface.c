@@ -23,14 +23,13 @@
 
 #include <target/target.h>
 
-static struct hl_interface_s hl_if = {
+static struct hl_interface hl_if = {
 	.param = {
 		.device_desc = NULL,
 		.vid = { 0 },
 		.pid = { 0 },
 		.transport = HL_TRANSPORT_UNKNOWN,
 		.connect_under_reset = false,
-		.initial_interface_speed = -1,
 		.use_stlink_tcp = false,
 		.stlink_tcp_port = 7184,
 	},
@@ -76,7 +75,7 @@ int hl_interface_init_target(struct target *t)
 	if (res != ERROR_OK)
 		return res;
 
-	unsigned ii, limit = t->tap->expected_ids_cnt;
+	unsigned int ii, limit = t->tap->expected_ids_cnt;
 	int found = 0;
 
 	for (ii = 0; ii < limit; ii++) {
@@ -100,7 +99,7 @@ int hl_interface_init_target(struct target *t)
 	}
 
 	t->tap->priv = &hl_if;
-	t->tap->hasidcode = 1;
+	t->tap->has_idcode = true;
 
 	return ERROR_OK;
 }
@@ -165,11 +164,8 @@ static int hl_interface_speed(int speed)
 	if (!hl_if.layout->api->speed)
 		return ERROR_OK;
 
-	if (!hl_if.handle) {
-		/* pass speed as initial param as interface not open yet */
-		hl_if.param.initial_interface_speed = speed;
+	if (!hl_if.handle)
 		return ERROR_OK;
-	}
 
 	hl_if.layout->api->speed(hl_if.handle, speed, false);
 
@@ -264,7 +260,7 @@ COMMAND_HANDLER(hl_interface_handle_vid_pid_command)
 		return ERROR_COMMAND_SYNTAX_ERROR;
 	}
 
-	unsigned i;
+	unsigned int i;
 	for (i = 0; i < CMD_ARGC; i += 2) {
 		COMMAND_PARSE_NUMBER(u16, CMD_ARGV[i], hl_if.param.vid[i / 2]);
 		COMMAND_PARSE_NUMBER(u16, CMD_ARGV[i + 1], hl_if.param.pid[i / 2]);
@@ -319,37 +315,37 @@ COMMAND_HANDLER(interface_handle_hla_command)
 	return ERROR_OK;
 }
 
-static const struct command_registration hl_interface_command_handlers[] = {
+static const struct command_registration hl_interface_subcommand_handlers[] = {
 	{
-	 .name = "hla_device_desc",
+	 .name = "device_desc",
 	 .handler = &hl_interface_handle_device_desc_command,
 	 .mode = COMMAND_CONFIG,
 	 .help = "set the device description of the adapter",
 	 .usage = "description_string",
 	 },
 	{
-	 .name = "hla_layout",
+	 .name = "layout",
 	 .handler = &hl_interface_handle_layout_command,
 	 .mode = COMMAND_CONFIG,
 	 .help = "set the layout of the adapter",
 	 .usage = "layout_name",
 	 },
 	{
-	 .name = "hla_vid_pid",
+	 .name = "vid_pid",
 	 .handler = &hl_interface_handle_vid_pid_command,
 	 .mode = COMMAND_CONFIG,
 	 .help = "the vendor and product ID of the adapter",
 	 .usage = "(vid pid)*",
 	 },
 	{
-	 .name = "hla_stlink_backend",
+	 .name = "stlink_backend",
 	 .handler = &hl_interface_handle_stlink_backend_command,
 	 .mode = COMMAND_CONFIG,
 	 .help = "select which ST-Link backend to use",
 	 .usage = "usb | tcp [port]",
 	},
-	 {
-	 .name = "hla_command",
+	{
+	 .name = "command",
 	 .handler = &interface_handle_hla_command,
 	 .mode = COMMAND_EXEC,
 	 .help = "execute a custom adapter-specific command",
@@ -358,9 +354,21 @@ static const struct command_registration hl_interface_command_handlers[] = {
 	COMMAND_REGISTRATION_DONE
 };
 
+static const struct command_registration hl_interface_command_handlers[] = {
+	{
+		.name = "hla",
+		.mode = COMMAND_ANY,
+		.help = "perform hla management",
+		.chain = hl_interface_subcommand_handlers,
+		.usage = "",
+	},
+	COMMAND_REGISTRATION_DONE
+};
+
 struct adapter_driver hl_adapter_driver = {
 	.name = "hla",
-	.transports = hl_transports,
+	.transport_ids = TRANSPORT_HLA_SWD | TRANSPORT_HLA_JTAG,
+	.transport_preferred_id = TRANSPORT_HLA_SWD,
 	.commands = hl_interface_command_handlers,
 
 	.init = hl_interface_init,

@@ -29,7 +29,7 @@ struct flash_bank;
  * flash bank DRIVERNAME ...parameters...
  * @endcode
  *
- * OpenOCD will search for the driver with a @c flash_driver_s::name
+ * OpenOCD will search for the driver with a @c flash_driver::name
  * that matches @c DRIVERNAME.
  *
  * The flash subsystem calls some of the other drivers routines a using
@@ -170,7 +170,7 @@ struct flash_driver {
 	/**
 	 * Check the erasure status of a flash bank.
 	 * When called, the driver routine must perform the required
-	 * checks and then set the @c flash_sector_s::is_erased field
+	 * checks and then set the @c flash_sector::is_erased field
 	 * for each of the flash banks's sectors.
 	 *
 	 * @param bank The bank to check
@@ -182,7 +182,7 @@ struct flash_driver {
 	 * Determine if the specific bank is "protected" or not.
 	 * When called, the driver routine must must perform the
 	 * required protection check(s) and then set the @c
-	 * flash_sector_s::is_protected field for each of the flash
+	 * flash_sector::is_protected field for each of the flash
 	 * bank's sectors.
 	 *
 	 * If protection is not implemented, set method to NULL
@@ -204,7 +204,7 @@ struct flash_driver {
 	int (*info)(struct flash_bank *bank, struct command_invocation *cmd);
 
 	/**
-	 * A more gentle flavor of flash_driver_s::probe, performing
+	 * A more gentle flavor of flash_driver::probe, performing
 	 * setup with less noise.  Generally, driver routines should test
 	 * to see if the bank has already been probed; if it has, the
 	 * driver probably should not perform its probe a second time.
@@ -257,8 +257,10 @@ extern const struct flash_driver cc26xx_flash;
 extern const struct flash_driver cc3220sf_flash;
 extern const struct flash_driver cfi_flash;
 extern const struct flash_driver dsp5680xx_flash;
+extern const struct flash_driver dw_spi_flash;
 extern const struct flash_driver efm32_flash;
 extern const struct flash_driver em357_flash;
+extern const struct flash_driver eneispif_flash;
 extern const struct flash_driver esirisc_flash;
 extern const struct flash_driver faux_flash;
 extern const struct flash_driver fespi_flash;
@@ -275,6 +277,7 @@ extern const struct flash_driver max32xxx_flash;
 extern const struct flash_driver mdr_flash;
 extern const struct flash_driver mrvlqspi_flash;
 extern const struct flash_driver msp432_flash;
+extern const struct flash_driver mspm0_flash;
 extern const struct flash_driver niietcm4_flash;
 extern const struct flash_driver npcx_flash;
 extern const struct flash_driver nrf51_flash;
@@ -289,7 +292,7 @@ extern const struct flash_driver psoc5lp_nvl_flash;
 extern const struct flash_driver psoc6_flash;
 extern const struct flash_driver qn908x_flash;
 extern const struct flash_driver renesas_rpchf_flash;
-extern const struct flash_driver rp2040_flash;
+extern const struct flash_driver rp2xxx_flash;
 extern const struct flash_driver rsl10_flash;
 extern const struct flash_driver sh_qspi_flash;
 extern const struct flash_driver sim3x_flash;

@@ -592,9 +592,9 @@ static int mips_mips64_unset_breakpoint(struct target *target,
 	return ERROR_OK;
 }
 
-static int mips_mips64_resume(struct target *target, int current,
-			      uint64_t address, int handle_breakpoints,
-			      int debug_execution)
+static int mips_mips64_resume(struct target *target, bool current,
+			      uint64_t address, bool handle_breakpoints,
+			      bool debug_execution)
 {
 	struct mips64_common *mips64 = target->arch_info;
 	struct mips_ejtag *ejtag_info = &mips64->ejtag_info;
@@ -622,7 +622,7 @@ static int mips_mips64_resume(struct target *target, int current,
 	}
 
 	pc = &mips64->core_cache->reg_list[MIPS64_PC];
-	/* current = 1: continue on current pc, otherwise continue at <address> */
+	/* current = true: continue on current pc, otherwise continue at <address> */
 	if (!current) {
 		buf_set_u64(pc->value, 0, 64, address);
 		pc->dirty = true;
@@ -696,8 +696,8 @@ static int mips_mips64_resume(struct target *target, int current,
 	return ERROR_OK;
 }
 
-static int mips_mips64_step(struct target *target, int current,
-			    uint64_t address, int handle_breakpoints)
+static int mips_mips64_step(struct target *target, bool current,
+			    uint64_t address, bool handle_breakpoints)
 {
 	struct mips64_common *mips64 = target->arch_info;
 	struct mips_ejtag *ejtag_info = &mips64->ejtag_info;
@@ -713,7 +713,7 @@ static int mips_mips64_step(struct target *target, int current,
 	if (mips64->mips64mode32)
 		address = mips64_extend_sign(address);
 
-	/* current = 1: continue on current pc, otherwise continue at
+	/* current = true: continue on current pc, otherwise continue at
 	 * <address> */
 	if (!current) {
 		buf_set_u64(pc->value, 0, 64, address);
@@ -1082,7 +1082,7 @@ static int mips_mips64_init_target(struct command_context *cmd_ctx,
 	return mips64_build_reg_cache(target);
 }
 
-static int mips_mips64_target_create(struct target *target, Jim_Interp *interp)
+static int mips_mips64_target_create(struct target *target)
 {
 	struct mips_mips64_common *mips_mips64;
 	struct mips64_common *mips64;
