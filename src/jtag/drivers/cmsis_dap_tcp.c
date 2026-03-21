@@ -341,7 +341,12 @@ static int cmsis_dap_tcp_read(struct cmsis_dap *dap, int transfer_timeout_ms,
 		LOG_DEBUG_IO("CMSIS-DAP: tcp timeout reached 1");
 		return ERROR_TIMEOUT_REACHED;
 	} else if (retval == -1) {
+#ifdef _WIN32
+		int err = WSAGetLastError();
+		if (err == WSAEWOULDBLOCK || err == WSAEINTR) {
+#else
 		if (errno == EAGAIN || errno == EWOULDBLOCK) {
+#endif
 			if (blocking == CMSIS_DAP_NON_BLOCKING)
 				return ERROR_TIMEOUT_REACHED;
 
