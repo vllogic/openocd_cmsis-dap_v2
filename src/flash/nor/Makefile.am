@@ -16,6 +16,9 @@ NOR_DRIVERS = \
 	%D%/aic8800m40.c \
 	%D%/ambiqmicro.c \
 	%D%/artery.c \
+	%D%/at32f4xx.c \
+	%D%/at32qspi.c \
+	%D%/at32xx.c \
 	%D%/at91sam4.c \
 	%D%/at91sam4l.c \
 	%D%/at91samd.c \
@@ -90,12 +93,11 @@ NOR_DRIVERS = \
 	%D%/xmc1xxx.c \
 	%D%/xmc4xxx.c \
 	%D%/hpm_xpi.c
-	%D%/at32f4xx.c \
-	%D%/at32xx.c \
-	%D%/at32qspi.c
 
 NORHEADERS = \
 	%D%/artery.h \
+	%D%/at32qspi.h \
+	%D%/at32xx.h \
 	%D%/core.h \
 	%D%/cc3220sf.h \
 	%D%/bluenrg-x.h \
@@ -110,5 +112,4 @@ NORHEADERS = \
 	%D%/spi.h \
 	%D%/stm32l4x.h \
 	%D%/stmqspi.h \
-	%D%/msp432.h \
-	%D%/at32qspi.h
+	%D%/msp432.h
