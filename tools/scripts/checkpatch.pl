@@ -92,6 +92,12 @@ my $git_command ='export LANGUAGE=en_US.UTF-8; git';
 my $tabsize = 8;
 my ${CONFIG_} = "CONFIG_";
 
+# OpenOCD specific: Begin: check markdown with pymarkdownlnt
+# Remember which Markdown (*.md) files were already linted.
+my %md_checked;
+my $md_linter_not_found;
+# OpenOCD specific: End
+
 sub help {
 	my ($exitcode) = @_;
 
@@ -1417,14 +1423,14 @@ sub top_of_kernel_tree {
 	if (!$OpenOCD) {
 	my @tree_check = (
 		"COPYING", "CREDITS", "Kbuild", "MAINTAINERS", "Makefile",
-		"README", "Documentation", "arch", "include", "drivers",
+		"README.md", "Documentation", "arch", "include", "drivers",
 		"fs", "init", "ipc", "kernel", "lib", "scripts",
 	);
 	} # !$OpenOCD
 	# OpenOCD specific: Begin
 	my @tree_check = (
 		"AUTHORS", "BUGS", "COPYING", "HACKING", "Makefile.am",
-		"README", "contrib", "doc", "src", "tcl", "testing", "tools",
+		"README.md", "contrib", "doc", "src", "tcl", "testing", "tools",
 	);
 	# OpenOCD specific: End
 
@@ -2435,6 +2441,44 @@ sub report_dump {
 	our @report;
 }
 
+# OpenOCD specific: Begin: check markdown with pymarkdownlnt
+sub run_md_linter {
+	my ($file) = @_;
+	my $md_linter = "pymarkdownlnt";
+
+	return if !$file || !-f $file;
+
+	if (!defined($md_linter_not_found)) {
+		$md_linter_not_found = (which($md_linter) eq "");
+	}
+
+	if ($md_linter_not_found) {
+		return;
+	}
+
+	my @cmd  = ($md_linter, "scan", $file);
+
+	my @out = qx{@cmd 2>&1};
+	my $rc  = $? >> 8;
+
+	foreach my $line (@out) {
+		chomp $line;
+		next if $line eq "";
+
+		if ($line =~ m/^(.*?):(\d+):(\d+):\s*([A-Z0-9]+):\s*(.*)$/) {
+			my ($path, $ln, $col, $code, $msg) = ($1, $2, $3, $4, $5);
+			WARN("MARKDOWN_LINT", "$file:$ln:$col: $code: $msg\n");
+		} else {
+			WARN("MARKDOWN_LINT: Failed to parse output: $line\n");
+		}
+	}
+
+	if ($rc != 0 && !@out) {
+		WARN("MARKDOWN_LINT", "Markdown linter exited with status $rc for $file\n");
+	}
+}
+# OpenOCD specific: End
+
 sub fixup_current_range {
 	my ($lineRef, $offset, $length) = @_;
 
@@ -2964,6 +3008,15 @@ sub process {
 					     "DT binding docs and includes should be a separate patch. See: Documentation/devicetree/bindings/submitting-patches.rst\n");
 				}
 			}
+
+			# OpenOCD specific: Begin: check markdown with pymarkdownlnt
+			# Lint Markdown files.
+			if ($realfile =~ /\.md$/ && !$md_checked{$realfile}) {
+				my $fullpath = $root ? "$root/$realfile" : $realfile;
+				run_md_linter($fullpath);
+				$md_checked{$realfile} = 1;
+			}
+			# OpenOCD specific: End
 
 			next;
 		}
@@ -4040,6 +4093,7 @@ sub process {
 			}
 		}
 
+if (!$OpenOCD) {
 # check for missing blank lines after struct/union declarations
 # with exceptions for various attributes and macros
 		if ($prevline =~ /^[\+ ]};?\s*$/ &&
@@ -4059,6 +4113,7 @@ sub process {
 				fix_insert_line($fixlinenr, "\+");
 			}
 		}
+} # !$OpenOCD
 
 # check for multiple consecutive blank lines
 		if ($prevline =~ /^[\+ ]\s*$/ &&
@@ -4073,6 +4128,7 @@ sub process {
 			$last_blank_line = $linenr;
 		}
 
+if (!$OpenOCD) {
 # check for missing blank lines after declarations
 # (declarations must have the same indentation and not be at the start of line)
 		if (($prevline =~ /\+(\s+)\S/) && $sline =~ /^\+$1\S/) {
@@ -4118,6 +4174,7 @@ sub process {
 				}
 			}
 		}
+} # !$OpenOCD
 
 # check for spaces at the beginning of a line.
 # Exceptions:

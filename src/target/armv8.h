@@ -151,13 +151,13 @@ struct armv8_arch_cache {
 };
 
 struct armv8_cache_common {
-	int info;
+	bool info_valid;
 	int loc;
 	uint32_t iminline;
 	uint32_t dminline;
 	struct armv8_arch_cache arch[6];	/* cache info, L1 - L7 */
-	int i_cache_enabled;
-	int d_u_cache_enabled;
+	bool i_cache_enabled;
+	bool d_u_cache_enabled;
 
 	/* l2 external unified cache if some */
 	void *l2_cache;
@@ -179,7 +179,7 @@ struct armv8_mmu_common {
 	int (*read_physical_memory)(struct target *target, target_addr_t address,
 			uint32_t size, uint32_t count, uint8_t *buffer);
 	struct armv8_cache_common armv8_cache;
-	uint32_t mmu_enabled;
+	bool mmu_enabled;
 };
 
 struct armv8_common {

@@ -412,6 +412,16 @@ err:
 	return retval;
 }
 
+static struct adiv5_dap *target_to_dap(const struct target *target)
+{
+	struct adiv5_private_config *pc = target->private_config;
+
+	if (!target->has_dap || !target->dap_configured || !pc)
+		return NULL;
+
+	return pc->dap;
+}
+
 COMMAND_HANDLER(handle_dap_names)
 {
 	if (CMD_ARGC != 0)
@@ -432,38 +442,37 @@ COMMAND_HANDLER(handle_dap_init)
 COMMAND_HANDLER(handle_dap_info_command)
 {
 	struct target *target = get_current_target(CMD_CTX);
-	struct arm *arm = target_to_arm(target);
-	struct adiv5_dap *dap = arm->dap;
+	struct adiv5_dap *dap = target_to_dap(target);
 	uint64_t apsel;
 
 	if (!dap) {
-		LOG_ERROR("DAP instance not available. Probably a HLA target...");
+		command_print(CMD, "target %s has no DAP", target_name(target));
 		return ERROR_TARGET_RESOURCE_NOT_AVAILABLE;
 	}
 
 	switch (CMD_ARGC) {
-		case 0:
-			apsel = dap->apsel;
-			break;
-		case 1:
-			if (!strcmp(CMD_ARGV[0], "root")) {
-				if (!is_adiv6(dap)) {
-					command_print(CMD, "Option \"root\" not allowed with ADIv5 DAP");
-					return ERROR_COMMAND_ARGUMENT_INVALID;
-				}
-				int retval = adiv6_dap_read_baseptr(CMD, dap, &apsel);
-				if (retval != ERROR_OK) {
-					command_print(CMD, "Failed reading DAP baseptr");
-					return retval;
-				}
-				break;
+	case 0:
+		apsel = dap->apsel;
+		break;
+	case 1:
+		if (!strcmp(CMD_ARGV[0], "root")) {
+			if (!is_adiv6(dap)) {
+				command_print(CMD, "Option \"root\" not allowed with ADIv5 DAP");
+				return ERROR_COMMAND_ARGUMENT_INVALID;
 			}
-			COMMAND_PARSE_NUMBER(u64, CMD_ARGV[0], apsel);
-			if (!is_ap_num_valid(dap, apsel))
-				return ERROR_COMMAND_SYNTAX_ERROR;
+			int retval = adiv6_dap_read_baseptr(CMD, dap, &apsel);
+			if (retval != ERROR_OK) {
+				command_print(CMD, "Failed reading DAP baseptr");
+				return retval;
+			}
 			break;
-		default:
+		}
+		COMMAND_PARSE_NUMBER(u64, CMD_ARGV[0], apsel);
+		if (!is_ap_num_valid(dap, apsel))
 			return ERROR_COMMAND_SYNTAX_ERROR;
+		break;
+	default:
+		return ERROR_COMMAND_SYNTAX_ERROR;
 	}
 
 	struct adiv5_ap *ap = dap_get_ap(dap, apsel);

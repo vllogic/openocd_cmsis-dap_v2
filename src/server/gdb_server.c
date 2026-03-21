@@ -474,7 +474,7 @@ static int gdb_put_packet_inner(struct connection *connection,
 
 		char local_buffer[1024];
 		local_buffer[0] = '$';
-		if ((size_t)len + 4 <= sizeof(local_buffer)) {
+		if ((size_t)len + 5 <= sizeof(local_buffer)) {
 			/* performance gain on smaller packets by only a single call to gdb_write() */
 			memcpy(local_buffer + 1, buffer, len++);
 			len += snprintf(local_buffer + len, sizeof(local_buffer) - len, "#%02x", my_checksum);
@@ -813,9 +813,12 @@ static void gdb_signal_reply(struct target *target, struct connection *connectio
 		sig_reply_len = snprintf(sig_reply, sizeof(sig_reply), "W00");
 	} else {
 		struct target *ct;
-		if (target->rtos) {
-			target->rtos->current_threadid = target->rtos->current_thread;
-			target->rtos->gdb_target_for_threadid(connection, target->rtos->current_threadid, &ct);
+		struct rtos *rtos;
+
+		rtos = rtos_from_target(target);
+		if (rtos) {
+			rtos->current_threadid = rtos->current_thread;
+			rtos->gdb_target_for_threadid(connection, rtos->current_threadid, &ct);
 		} else {
 			ct = target;
 		}
@@ -853,9 +856,9 @@ static void gdb_signal_reply(struct target *target, struct connection *connectio
 		}
 
 		current_thread[0] = '\0';
-		if (target->rtos)
+		if (rtos)
 			snprintf(current_thread, sizeof(current_thread), "thread:%" PRIx64 ";",
-					target->rtos->current_thread);
+					rtos->current_thread);
 
 		sig_reply_len = snprintf(sig_reply, sizeof(sig_reply), "T%2.2x%s%s",
 				signal_var, stop_reason, current_thread);
@@ -1041,8 +1044,8 @@ static int gdb_new_connection(struct connection *connection)
 	 * GDB session could leave dangling breakpoints if e.g. communication
 	 * timed out.
 	 */
-	breakpoint_clear_target(target);
-	watchpoint_clear_target(target);
+	breakpoint_remove_all(target);
+	watchpoint_remove_all(target);
 
 	/* Since version 3.95 (gdb-19990504), with the exclusion of 6.5~6.8, GDB
 	 * sends an ACK at connection with the following comment in its source code:
@@ -1411,8 +1414,13 @@ static int gdb_get_register_packet(struct connection *connection,
 	LOG_DEBUG("-");
 #endif
 
-	if ((target->rtos) && (rtos_get_gdb_reg(connection, reg_num) == ERROR_OK))
-		return ERROR_OK;
+	if (target->rtos) {
+		retval = rtos_get_gdb_reg(connection, reg_num);
+		if (retval == ERROR_OK)
+			return ERROR_OK;
+		if (retval != ERROR_NOT_IMPLEMENTED)
+			return gdb_error(connection, retval);
+	}
 
 	retval = target_get_gdb_reg_list_noread(target, &reg_list, &reg_list_size,
 			REG_CLASS_ALL);
@@ -1557,7 +1565,7 @@ static int gdb_read_memory_packet(struct connection *connection,
 
 	buffer = malloc(len);
 
-	LOG_DEBUG("addr: 0x%16.16" PRIx64 ", len: 0x%8.8" PRIx32 "", addr, len);
+	LOG_DEBUG("addr: 0x%16.16" PRIx64 ", len: 0x%8.8" PRIx32, addr, len);
 
 	retval = ERROR_NOT_IMPLEMENTED;
 	if (target->rtos)
@@ -1629,7 +1637,7 @@ static int gdb_write_memory_packet(struct connection *connection,
 
 	buffer = malloc(len);
 
-	LOG_DEBUG("addr: 0x%" PRIx64 ", len: 0x%8.8" PRIx32 "", addr, len);
+	LOG_DEBUG("addr: 0x%" PRIx64 ", len: 0x%8.8" PRIx32, addr, len);
 
 	if (unhexify(buffer, separator, len) != len)
 		LOG_ERROR("unable to decode memory packet");
@@ -1705,7 +1713,7 @@ static int gdb_write_memory_binary_packet(struct connection *connection,
 	}
 
 	if (len) {
-		LOG_DEBUG("addr: 0x%" PRIx64 ", len: 0x%8.8" PRIx32 "", addr, len);
+		LOG_DEBUG("addr: 0x%" PRIx64 ", len: 0x%8.8" PRIx32, addr, len);
 
 		retval = ERROR_NOT_IMPLEMENTED;
 		if (target->rtos)
@@ -1809,7 +1817,15 @@ static int gdb_breakpoint_watchpoint_packet(struct connection *connection,
 		case 0:
 		case 1:
 			if (packet[0] == 'Z') {
-				retval = breakpoint_add(target, address, size, bp_type);
+				struct target *bp_target = target;
+				if (target->rtos && bp_type == BKPT_SOFT) {
+					bp_target = rtos_swbp_target(target, address, size, bp_type);
+					if (!bp_target) {
+						retval = ERROR_FAIL;
+						break;
+					}
+				}
+				retval = breakpoint_add(bp_target, address, size, bp_type);
 			} else {
 				assert(packet[0] == 'z');
 				retval = breakpoint_remove(target, address);
@@ -1988,52 +2004,67 @@ static int gdb_memory_map(struct connection *connection,
 				"length=\"" TARGET_ADDR_FMT "\"/>\n",
 				ram_start, p->base - ram_start);
 
-		/* Report adjacent groups of same-size sectors.  So for
-		 * example top boot CFI flash will list an initial region
-		 * with several large sectors (maybe 128KB) and several
-		 * smaller ones at the end (maybe 32KB).  STR7 will have
-		 * regions with 8KB, 32KB, and 64KB sectors; etc.
-		 */
-		for (unsigned int j = 0; j < p->num_sectors; j++) {
-
-			/* Maybe start a new group of sectors. */
-			if (sector_size == 0) {
-				if (p->sectors[j].offset + p->sectors[j].size > p->size) {
-					LOG_WARNING("The flash sector at offset 0x%08" PRIx32
-						" overflows the end of %s bank.",
-						p->sectors[j].offset, p->name);
-					LOG_WARNING("The rest of bank will not show in gdb memory map.");
-					break;
-				}
-				target_addr_t start;
-				start = p->base + p->sectors[j].offset;
+		if (p->read_only) {
+			xml_printf(&retval, &xml, &pos, &size,
+				"<memory type=\"rom\" start=\"" TARGET_ADDR_FMT "\" "
+				"length=\"0x%x\"/>\n",
+				p->base, p->size);
+		} else {
+			if (p->num_sectors == 0) {
 				xml_printf(&retval, &xml, &pos, &size,
 					"<memory type=\"flash\" "
-					"start=\"" TARGET_ADDR_FMT "\" ",
-					start);
-				sector_size = p->sectors[j].size;
-				group_len = sector_size;
-			} else {
-				group_len += sector_size; /* equal to p->sectors[j].size */
+						"start=\"" TARGET_ADDR_FMT "\" "
+						"length=\"0x%x\">"
+						"<property name=\"blocksize\">0x%x</property>\n"
+					"</memory>\n", p->base, p->size, p->size);
 			}
 
-			/* Does this finish a group of sectors?
-			 * If not, continue an already-started group.
+			/* Report adjacent groups of same-size sectors.  So for
+			 * example top boot CFI flash will list an initial region
+			 * with several large sectors (maybe 128KB) and several
+			 * smaller ones at the end (maybe 32KB).  STR7 will have
+			 * regions with 8KB, 32KB, and 64KB sectors; etc.
 			 */
-			if (j < p->num_sectors - 1
-					&& p->sectors[j + 1].size == sector_size
-					&& p->sectors[j + 1].offset == p->sectors[j].offset + sector_size
-					&& p->sectors[j + 1].offset + p->sectors[j + 1].size <= p->size)
-				continue;
+			for (unsigned int j = 0; j < p->num_sectors; j++) {
+				// Maybe start a new group of sectors
+				if (sector_size == 0) {
+					if (p->sectors[j].offset + p->sectors[j].size > p->size) {
+						LOG_WARNING("The flash sector at offset 0x%08" PRIx32
+							" overflows the end of %s bank.",
+							p->sectors[j].offset, p->name);
+						LOG_WARNING("The rest of bank will not show in gdb memory map.");
+						break;
+					}
+					target_addr_t start;
+					start = p->base + p->sectors[j].offset;
+					xml_printf(&retval, &xml, &pos, &size,
+						"<memory type=\"flash\" "
+						"start=\"" TARGET_ADDR_FMT "\" ",
+						start);
+					sector_size = p->sectors[j].size;
+					group_len = sector_size;
+				} else {
+					group_len += sector_size; /* equal to p->sectors[j].size */
+				}
 
-			xml_printf(&retval, &xml, &pos, &size,
-				"length=\"0x%x\">\n"
-				"<property name=\"blocksize\">"
-				"0x%x</property>\n"
-				"</memory>\n",
-				group_len,
-				sector_size);
-			sector_size = 0;
+				/* Does this finish a group of sectors?
+				 * If not, continue an already-started group.
+				 */
+				if (j < p->num_sectors - 1
+						&& p->sectors[j + 1].size == sector_size
+						&& p->sectors[j + 1].offset == p->sectors[j].offset + sector_size
+						&& p->sectors[j + 1].offset + p->sectors[j + 1].size <= p->size)
+					continue;
+
+				xml_printf(&retval, &xml, &pos, &size,
+					"length=\"0x%x\">\n"
+					"<property name=\"blocksize\">"
+					"0x%x</property>\n"
+					"</memory>\n",
+					group_len,
+					sector_size);
+				sector_size = 0;
+			}
 		}
 
 		ram_start = p->base + p->size;
@@ -2874,7 +2905,7 @@ static int gdb_query_packet(struct connection *connection,
 			gdb_connection->output_flag = GDB_OUTPUT_NO;
 
 			if (retval == ERROR_OK) {
-				snprintf(gdb_reply, 10, "C%8.8" PRIx32 "", checksum);
+				snprintf(gdb_reply, 10, "C%8.8" PRIx32, checksum);
 				gdb_put_packet(connection, gdb_reply, 9);
 			} else {
 				retval = gdb_error(connection, retval);
@@ -3075,8 +3106,22 @@ static bool gdb_handle_vcont_packet(struct connection *connection, const char *p
 		}
 
 		if (target->rtos) {
-			/* FIXME: why is this necessary? rtos state should be up-to-date here already! */
-			rtos_update_threads(target);
+			/* Sometimes this results in picking a different thread than
+			 * gdb just requested to step. Then we fake it, and now there's
+			 * a different thread selected than gdb expects, so register
+			 * accesses go to the wrong one!
+			 * E.g.:
+			 * Hg1$
+			 * P8=72101ce197869329$		# write r8 on thread 1
+			 * g$
+			 * vCont?$
+			 * vCont;s:1;c$				# rtos_update_threads changes to other thread
+			 * g$
+			 * qXfer:threads:read::0,fff$
+			 * P8=cc060607eb89ca7f$		# write r8 on other thread
+			 * g$
+			 */
+			 /* rtos_update_threads(target); */
 
 			target->rtos->gdb_target_for_threadid(connection, thread_id, &ct);
 
@@ -3084,8 +3129,7 @@ static bool gdb_handle_vcont_packet(struct connection *connection, const char *p
 			 * check if the thread to be stepped is the current rtos thread
 			 * if not, we must fake the step
 			 */
-			if (target->rtos->current_thread != thread_id)
-				fake_step = true;
+			fake_step = rtos_needs_fake_step(target, thread_id);
 		}
 
 		if (parse[0] == ';') {
@@ -3219,8 +3263,8 @@ static void gdb_restart_inferior(struct connection *connection, const char *pack
 	struct gdb_connection *gdb_con = connection->priv;
 	struct target *target = get_target_from_connection(connection);
 
-	breakpoint_clear_target(target);
-	watchpoint_clear_target(target);
+	breakpoint_remove_all(target);
+	watchpoint_remove_all(target);
 	command_run_linef(connection->cmd_ctx, "ocd_gdb_restart %s",
 			target_name(target));
 	/* set connection as attached after reset */
@@ -3709,18 +3753,30 @@ static int gdb_input_inner(struct connection *connection)
 					break;
 
 				case 'j':
-					/* DEPRECATED */
-					/* packet supported only by smp target i.e cortex_a.c*/
-					/* handle smp packet replying coreid played to gbd */
-					gdb_read_smp_packet(connection, packet, packet_size);
+					if (strncmp(packet, "jc", 2) == 0) {
+						/* DEPRECATED */
+						/* packet supported only by smp target i.e cortex_a.c*/
+						/* handle smp packet replying coreid played to gbd */
+						gdb_read_smp_packet(connection, packet, packet_size);
+					} else {
+						/* ignore unknown packets */
+						LOG_DEBUG("ignoring 0x%2.2x packet", packet[0]);
+						retval = gdb_put_packet(connection, "", 0);
+					}
 					break;
 
 				case 'J':
-					/* DEPRECATED */
-					/* packet supported only by smp target i.e cortex_a.c */
-					/* handle smp packet setting coreid to be played at next
-					 * resume to gdb */
-					gdb_write_smp_packet(connection, packet, packet_size);
+					if (strncmp(packet, "jc", 2) == 0) {
+						/* DEPRECATED */
+						/* packet supported only by smp target i.e cortex_a.c */
+						/* handle smp packet setting coreid to be played at next
+						* resume to gdb */
+						gdb_read_smp_packet(connection, packet, packet_size);
+					} else {
+						/* ignore unknown packets */
+						LOG_DEBUG("ignoring 0x%2.2x packet", packet[0]);
+						retval = gdb_put_packet(connection, "", 0);
+					}
 					break;
 
 				case 'F':
@@ -3761,7 +3817,8 @@ static int gdb_input_inner(struct connection *connection)
 					target_call_event_callbacks(target, TARGET_EVENT_GDB_HALT);
 				gdb_con->ctrl_c = false;
 			} else {
-				LOG_INFO("The target is not running when halt was requested, stopping GDB.");
+				LOG_TARGET_INFO(target, "Not running when halt was requested, stopping GDB. (state=%d)",
+						target->state);
 				target_call_event_callbacks(target, TARGET_EVENT_GDB_HALT);
 			}
 		}
@@ -3851,12 +3908,11 @@ static const struct service_driver gdb_service_driver = {
 
 static int gdb_target_start(struct target *target, const char *port)
 {
-	struct gdb_service *gdb_service;
-	int ret;
-	gdb_service = malloc(sizeof(struct gdb_service));
-
-	if (!gdb_service)
-		return -ENOMEM;
+	struct gdb_service *gdb_service = malloc(sizeof(struct gdb_service));
+	if (!gdb_service) {
+		LOG_ERROR("Out of memory");
+		return ERROR_FAIL;
+	}
 
 	LOG_TARGET_INFO(target, "starting gdb server on %s", port);
 
@@ -3865,17 +3921,22 @@ static int gdb_target_start(struct target *target, const char *port)
 	gdb_service->core[1] = -1;
 	target->gdb_service = gdb_service;
 
-	ret = add_service(&gdb_service_driver, port, target->gdb_max_connections, gdb_service);
-	/* initialize all targets gdb service with the same pointer */
-	{
-		struct target_list *head;
-		foreach_smp_target(head, target->smp_targets) {
-			struct target *curr = head->target;
-			if (curr != target)
-				curr->gdb_service = gdb_service;
-		}
+	int retval = add_service(&gdb_service_driver, port,
+			target->gdb_max_connections, gdb_service);
+	if (retval != ERROR_OK) {
+		free(gdb_service);
+		return retval;
 	}
-	return ret;
+
+	/* initialize all targets gdb service with the same pointer */
+	struct target_list *head;
+	foreach_smp_target(head, target->smp_targets) {
+		struct target *curr = head->target;
+		if (curr != target)
+			curr->gdb_service = gdb_service;
+	}
+
+	return ERROR_OK;
 }
 
 static int gdb_target_add_one(struct target *target)

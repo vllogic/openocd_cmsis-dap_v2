@@ -18,6 +18,7 @@
 
 #include "register.h"
 #include <helper/binarybuffer.h>
+#include <helper/string_choices.h>
 #include <helper/command.h>
 #include <helper/nvp.h>
 
@@ -119,27 +120,27 @@ static uint8_t armv8_pa_size(uint32_t ps)
 {
 	uint8_t ret = 0;
 	switch (ps) {
-		case 0:
-			ret = 32;
-			break;
-		case 1:
-			ret = 36;
-			break;
-		case 2:
-			ret = 40;
-			break;
-		case 3:
-			ret = 42;
-			break;
-		case 4:
-			ret = 44;
-			break;
-		case 5:
-			ret = 48;
-			break;
-		default:
-			LOG_INFO("Unknown physical address size");
-			break;
+	case 0:
+		ret = 32;
+		break;
+	case 1:
+		ret = 36;
+		break;
+	case 2:
+		ret = 40;
+		break;
+	case 3:
+		ret = 42;
+		break;
+	case 4:
+		ret = 44;
+		break;
+	case 5:
+		ret = 48;
+		break;
+	default:
+		LOG_INFO("Unknown physical address size");
+		break;
 	}
 	return ret;
 }
@@ -204,7 +205,9 @@ static int armv8_read_ttbcr(struct target *target)
 		retval = dpm->instr_read_data_r0(dpm,
 				ARMV8_MRS(SYSTEM_TCR_EL3, 0),
 				&ttbcr);
-		retval += dpm->instr_read_data_r0_64(dpm,
+		if (retval != ERROR_OK)
+			goto done;
+		retval = dpm->instr_read_data_r0_64(dpm,
 				ARMV8_MRS(SYSTEM_TTBR0_EL3, 0),
 				&armv8->ttbr_base);
 		if (retval != ERROR_OK)
@@ -217,7 +220,9 @@ static int armv8_read_ttbcr(struct target *target)
 		retval = dpm->instr_read_data_r0(dpm,
 				ARMV8_MRS(SYSTEM_TCR_EL2, 0),
 				&ttbcr);
-		retval += dpm->instr_read_data_r0_64(dpm,
+		if (retval != ERROR_OK)
+			goto done;
+		retval = dpm->instr_read_data_r0_64(dpm,
 				ARMV8_MRS(SYSTEM_TTBR0_EL2, 0),
 				&armv8->ttbr_base);
 		if (retval != ERROR_OK)
@@ -233,12 +238,14 @@ static int armv8_read_ttbcr(struct target *target)
 		retval = dpm->instr_read_data_r0_64(dpm,
 				ARMV8_MRS(SYSTEM_TCR_EL1, 0),
 				&ttbcr_64);
+		if (retval != ERROR_OK)
+			goto done;
 		armv8->va_size = 64 - (ttbcr_64 & 0x3F);
 		armv8->pa_size = armv8_pa_size((ttbcr_64 >> 32) & 7);
 		armv8->page_size = (ttbcr_64 >> 14) & 3;
 		armv8->armv8_mmu.ttbr1_used = (((ttbcr_64 >> 16) & 0x3F) != 0) ? 1 : 0;
 		armv8->armv8_mmu.ttbr0_mask  = 0x0000FFFFFFFFFFFFULL;
-		retval += dpm->instr_read_data_r0_64(dpm,
+		retval = dpm->instr_read_data_r0_64(dpm,
 				ARMV8_MRS(SYSTEM_TTBR0_EL1 | (armv8->armv8_mmu.ttbr1_used), 0),
 				&armv8->ttbr_base);
 		if (retval != ERROR_OK)
@@ -1069,18 +1076,18 @@ static void armv8_decode_cacheability(int attr)
 		return;
 	}
 	switch (attr & 0xC) {
-		case 0:
-			LOG_USER_N("Write-Through Transient");
-			break;
-		case 0x4:
-			LOG_USER_N("Write-Back Transient");
-			break;
-		case 0x8:
-			LOG_USER_N("Write-Through Non-transient");
-			break;
-		case 0xC:
-			LOG_USER_N("Write-Back Non-transient");
-			break;
+	case 0:
+		LOG_USER_N("Write-Through Transient");
+		break;
+	case 0x4:
+		LOG_USER_N("Write-Back Transient");
+		break;
+	case 0x8:
+		LOG_USER_N("Write-Through Non-transient");
+		break;
+	case 0xC:
+		LOG_USER_N("Write-Back Non-transient");
+		break;
 	}
 	if (attr & 2)
 		LOG_USER_N(" Read-Allocate");
@@ -1107,18 +1114,18 @@ static void armv8_decode_memory_attr(int attr)
 			 "Non-transient");
 	} else if ((attr & 0xF0) == 0) {
 		switch (attr & 0xC) {
-			case 0:
-				LOG_USER_N("Device-nGnRnE Memory");
-				break;
-			case 0x4:
-				LOG_USER_N("Device-nGnRE Memory");
-				break;
-			case 0x8:
-				LOG_USER_N("Device-nGRE Memory");
-				break;
-			case 0xC:
-				LOG_USER_N("Device-GRE Memory");
-				break;
+		case 0:
+			LOG_USER_N("Device-nGnRnE Memory");
+			break;
+		case 0x4:
+			LOG_USER_N("Device-nGnRE Memory");
+			break;
+		case 0x8:
+			LOG_USER_N("Device-nGRE Memory");
+			break;
+		case 0xC:
+			LOG_USER_N("Device-GRE Memory");
+			break;
 		}
 		if (attr & 1)
 			LOG_USER(", XS=0");
@@ -1302,7 +1309,7 @@ COMMAND_HANDLER(armv8_pauth_command)
 int armv8_handle_cache_info_command(struct command_invocation *cmd,
 	struct armv8_cache_common *armv8_cache)
 {
-	if (armv8_cache->info == -1) {
+	if (!armv8_cache->info_valid) {
 		command_print(cmd, "cache not yet identified");
 		return ERROR_OK;
 	}
@@ -1329,7 +1336,7 @@ int armv8_init_arch_info(struct target *target, struct armv8_common *armv8)
 	armv8->common_magic = ARMV8_COMMON_MAGIC;
 
 	armv8->armv8_mmu.armv8_cache.l2_cache = NULL;
-	armv8->armv8_mmu.armv8_cache.info = -1;
+	armv8->armv8_mmu.armv8_cache.info_valid = false;
 	armv8->armv8_mmu.armv8_cache.flush_all_data_cache = NULL;
 	armv8->armv8_mmu.armv8_cache.display_cache_info = NULL;
 	return ERROR_OK;
@@ -1359,10 +1366,6 @@ static int armv8_aarch64_state(struct target *target)
 
 int armv8_arch_state(struct target *target)
 {
-	static const char * const state[] = {
-		"disabled", "enabled"
-	};
-
 	struct armv8_common *armv8 = target_to_armv8(target);
 	struct arm *arm = &armv8->arm;
 
@@ -1377,9 +1380,9 @@ int armv8_arch_state(struct target *target)
 		arm_arch_state(target);
 
 	LOG_USER("MMU: %s, D-Cache: %s, I-Cache: %s",
-		state[armv8->armv8_mmu.mmu_enabled],
-		state[armv8->armv8_mmu.armv8_cache.d_u_cache_enabled],
-		state[armv8->armv8_mmu.armv8_cache.i_cache_enabled]);
+		str_enabled_disabled(armv8->armv8_mmu.mmu_enabled),
+		str_enabled_disabled(armv8->armv8_mmu.armv8_cache.d_u_cache_enabled),
+		str_enabled_disabled(armv8->armv8_mmu.armv8_cache.i_cache_enabled));
 
 	if (arm->core_mode == ARM_MODE_ABT)
 		armv8_show_fault_registers(target);
@@ -1852,7 +1855,12 @@ struct reg_cache *armv8_build_reg_cache(struct target *target)
 		reg_list[i].group = armv8_regs[i].group;
 		reg_list[i].number = i;
 		reg_list[i].exist = true;
-		reg_list[i].caller_save = true;	/* gdb defaults to true */
+
+		/* Registers which should be preserved across GDB inferior function calls.
+		 * Avoid saving ELx banked registers as a standard function should
+		 * not change them and higher EL registers are not accessible
+		 * in lower EL modes. */
+		reg_list[i].caller_save = i < ARMV8_ELR_EL1;
 
 		feature = calloc(1, sizeof(struct reg_feature));
 		if (feature) {

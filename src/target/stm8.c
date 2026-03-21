@@ -704,19 +704,19 @@ static int stm8_write_flash(struct target *target, enum mem_type type,
 	int res;
 
 	switch (type) {
-		case (FLASH):
-			stm8_unlock_flash(target);
-			break;
-		case (EEPROM):
-			stm8_unlock_eeprom(target);
-			break;
-		case (OPTION):
-			stm8_unlock_eeprom(target);
-			opt = OPT;
-			break;
-		default:
-			LOG_ERROR("BUG: wrong mem_type %d", type);
-			assert(0);
+	case FLASH:
+		stm8_unlock_flash(target);
+		break;
+	case EEPROM:
+		stm8_unlock_eeprom(target);
+		break;
+	case OPTION:
+		stm8_unlock_eeprom(target);
+		opt = OPT;
+		break;
+	default:
+		LOG_ERROR("BUG: wrong mem_type %d", type);
+		assert(0);
 	}
 
 	if (size == 2) {
@@ -1094,11 +1094,11 @@ static int stm8_resume(struct target *target, bool current,
 	if (!debug_execution) {
 		target->state = TARGET_RUNNING;
 		target_call_event_callbacks(target, TARGET_EVENT_RESUMED);
-		LOG_DEBUG("target resumed at 0x%" PRIx32 "", resume_pc);
+		LOG_DEBUG("target resumed at 0x%" PRIx32, resume_pc);
 	} else {
 		target->state = TARGET_DEBUG_RUNNING;
 		target_call_event_callbacks(target, TARGET_EVENT_DEBUG_RESUMED);
-		LOG_DEBUG("target debug resumed at 0x%" PRIx32 "", resume_pc);
+		LOG_DEBUG("target debug resumed at 0x%" PRIx32, resume_pc);
 	}
 
 	return ERROR_OK;
@@ -1173,7 +1173,7 @@ static int stm8_read_core_reg(struct target *target, unsigned int num)
 		return ERROR_COMMAND_SYNTAX_ERROR;
 
 	reg_value = stm8->core_regs[num];
-	LOG_DEBUG("read core reg %i value 0x%" PRIx32 "", num, reg_value);
+	LOG_DEBUG("read core reg %i value 0x%" PRIx32, num, reg_value);
 	buf_set_u32(stm8->core_cache->reg_list[num].value, 0, 32, reg_value);
 	stm8->core_cache->reg_list[num].valid = true;
 	stm8->core_cache->reg_list[num].dirty = false;
@@ -1193,7 +1193,7 @@ static int stm8_write_core_reg(struct target *target, unsigned int num)
 
 	reg_value = buf_get_u32(stm8->core_cache->reg_list[num].value, 0, 32);
 	stm8->core_regs[num] = reg_value;
-	LOG_DEBUG("write core reg %i value 0x%" PRIx32 "", num, reg_value);
+	LOG_DEBUG("write core reg %i value 0x%" PRIx32, num, reg_value);
 	stm8->core_cache->reg_list[num].valid = true;
 	stm8->core_cache->reg_list[num].dirty = false;
 
@@ -1327,7 +1327,7 @@ static int stm8_arch_state(struct target *target)
 {
 	struct stm8_common *stm8 = target_to_stm8(target);
 
-	LOG_USER("target halted due to %s, pc: 0x%8.8" PRIx32 "",
+	LOG_USER("target halted due to %s, pc: 0x%8.8" PRIx32,
 		debug_reason_name(target),
 		buf_get_u32(stm8->core_cache->reg_list[STM8_PC].value, 0, 32));
 
@@ -1438,7 +1438,7 @@ static int stm8_set_breakpoint(struct target *target,
 		if (retval != ERROR_OK)
 			return retval;
 
-		LOG_DEBUG("bpid: %" PRIu32 ", bp_num %i bp_value 0x%" PRIx32 "",
+		LOG_DEBUG("bpid: %" PRIu32 ", bp_num %i bp_value 0x%" PRIx32,
 				  breakpoint->unique_id,
 				  bp_num, comparator_list[bp_num].bp_value);
 	} else if (breakpoint->type == BKPT_SOFT) {
@@ -1601,17 +1601,17 @@ static int stm8_set_watchpoint(struct target *target,
 	enum hw_break_type enable = 0;
 
 	switch (watchpoint->rw) {
-		case WPT_READ:
-			enable = HWBRK_RD;
-			break;
-		case WPT_WRITE:
-			enable = HWBRK_WR;
-			break;
-		case WPT_ACCESS:
-			enable = HWBRK_ACC;
-			break;
-		default:
-			LOG_ERROR("BUG: watchpoint->rw neither read, write nor access");
+	case WPT_READ:
+		enable = HWBRK_RD;
+		break;
+	case WPT_WRITE:
+		enable = HWBRK_WR;
+		break;
+	case WPT_ACCESS:
+		enable = HWBRK_ACC;
+		break;
+	default:
+		LOG_ERROR("BUG: watchpoint->rw neither read, write nor access");
 	}
 
 	comparator_list[wp_num].used = true;
@@ -1626,7 +1626,7 @@ static int stm8_set_watchpoint(struct target *target,
 
 	watchpoint_set(watchpoint, wp_num);
 
-	LOG_DEBUG("wp_num %i bp_value 0x%" PRIx32 "",
+	LOG_DEBUG("wp_num %i bp_value 0x%" PRIx32,
 			wp_num,
 			comparator_list[wp_num].bp_value);
 
@@ -1757,7 +1757,8 @@ static int stm8_examine(struct target *target)
 
 /** Checks whether a memory region is erased. */
 static int stm8_blank_check_memory(struct target *target,
-		struct target_memory_check_block *blocks, int num_blocks, uint8_t erased_value)
+		struct target_memory_check_block *blocks, unsigned int num_blocks,
+		uint8_t erased_value, unsigned int *checked)
 {
 	struct working_area *erase_check_algorithm;
 	struct reg_param reg_params[2];
@@ -1801,8 +1802,10 @@ static int stm8_blank_check_memory(struct target *target,
 			erase_check_algorithm->address + (sizeof(stm8_erase_check_code) - 1),
 			10000, &stm8_info);
 
-	if (retval == ERROR_OK)
+	if (retval == ERROR_OK) {
 		blocks[0].result = (*(reg_params[0].value) == 0xff);
+		*checked = 1;	/* only one block has been checked */
+	}
 
 	destroy_mem_param(&mem_params[0]);
 	destroy_mem_param(&mem_params[1]);
@@ -1811,10 +1814,7 @@ static int stm8_blank_check_memory(struct target *target,
 
 	target_free_working_area(target, erase_check_algorithm);
 
-	if (retval != ERROR_OK)
-		return retval;
-
-	return 1;	/* only one block has been checked */
+	return retval;
 }
 
 static int stm8_checksum_memory(struct target *target, target_addr_t address,

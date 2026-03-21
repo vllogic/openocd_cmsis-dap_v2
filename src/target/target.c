@@ -71,45 +71,45 @@ static int target_gdb_fileio_end_default(struct target *target, int retcode,
 		int fileio_errno, bool ctrl_c);
 
 static struct target_type *target_types[] = {
-	&arm7tdmi_target,
-	&arm9tdmi_target,
-	&arm920t_target,
-	&arm720t_target,
-	&arm966e_target,
-	&arm946e_target,
-	&arm926ejs_target,
-	&fa526_target,
-	&feroceon_target,
-	&dragonite_target,
-	&xscale_target,
-	&xtensa_chip_target,
-	&cortexm_target,
-	&cortexa_target,
-	&cortexr4_target,
+	// Keep in alphabetic order this list of targets
+	&aarch64_target,
+	&arcv2_target,
 	&arm11_target,
-	&ls1_sap_target,
-	&mips_m4k_target,
+	&arm720t_target,
+	&arm7tdmi_target,
+	&arm920t_target,
+	&arm926ejs_target,
+	&arm946e_target,
+	&arm966e_target,
+	&arm9tdmi_target,
+	&armv8r_target,
+	&avr32_ap7k_target,
 	&avr_target,
+	&cortexa_target,
+	&cortexm_target,
+	&cortexr4_target,
+	&dragonite_target,
 	&dsp563xx_target,
 	&dsp5680xx_target,
-	&testee_target,
-	&avr32_ap7k_target,
-	&hla_target,
-	&esp32_target,
+	&esirisc_target,
 	&esp32s2_target,
 	&esp32s3_target,
-	&or1k_target,
-	&quark_x10xx_target,
-	&quark_d20xx_target,
-	&stm8_target,
-	&riscv_target,
+	&esp32_target,
+	&fa526_target,
+	&feroceon_target,
+	&hla_target,
+	&ls1_sap_target,
 	&mem_ap_target,
-	&esirisc_target,
-	&arcv2_target,
-	&aarch64_target,
-	&armv8r_target,
+	&mips_m4k_target,
 	&mips_mips64_target,
-	NULL,
+	&or1k_target,
+	&quark_d20xx_target,
+	&quark_x10xx_target,
+	&riscv_target,
+	&stm8_target,
+	&testee_target,
+	&xscale_target,
+	&xtensa_chip_target,
 };
 
 struct target *all_targets;
@@ -650,9 +650,9 @@ static int identity_virt2phys(struct target *target,
 	return ERROR_OK;
 }
 
-static int no_mmu(struct target *target, int *enabled)
+static int no_mmu(struct target *target, bool *enabled)
 {
-	*enabled = 0;
+	*enabled = false;
 	return ERROR_OK;
 }
 
@@ -1244,15 +1244,23 @@ int target_run_read_async_algorithm(struct target *target,
 	return retval;
 }
 
+bool target_memory_ready(struct target *target)
+{
+	if (target->type->memory_ready)
+		return target->type->memory_ready(target);
+
+	return target_was_examined(target);
+}
+
 int target_read_memory(struct target *target,
 		target_addr_t address, uint32_t size, uint32_t count, uint8_t *buffer)
 {
-	if (!target_was_examined(target)) {
-		LOG_ERROR("Target not examined yet");
+	if (!target_memory_ready(target)) {
+		LOG_TARGET_ERROR(target, "Memory not ready");
 		return ERROR_FAIL;
 	}
 	if (!target->type->read_memory) {
-		LOG_ERROR("Target %s doesn't support read_memory", target_name(target));
+		LOG_TARGET_ERROR(target, "doesn't support read_memory");
 		return ERROR_FAIL;
 	}
 	return target->type->read_memory(target, address, size, count, buffer);
@@ -1261,12 +1269,12 @@ int target_read_memory(struct target *target,
 int target_read_phys_memory(struct target *target,
 		target_addr_t address, uint32_t size, uint32_t count, uint8_t *buffer)
 {
-	if (!target_was_examined(target)) {
-		LOG_ERROR("Target not examined yet");
+	if (!target_memory_ready(target)) {
+		LOG_TARGET_ERROR(target, "Memory not ready");
 		return ERROR_FAIL;
 	}
 	if (!target->type->read_phys_memory) {
-		LOG_ERROR("Target %s doesn't support read_phys_memory", target_name(target));
+		LOG_TARGET_ERROR(target, "doesn't support read_phys_memory");
 		return ERROR_FAIL;
 	}
 	return target->type->read_phys_memory(target, address, size, count, buffer);
@@ -1275,12 +1283,12 @@ int target_read_phys_memory(struct target *target,
 int target_write_memory(struct target *target,
 		target_addr_t address, uint32_t size, uint32_t count, const uint8_t *buffer)
 {
-	if (!target_was_examined(target)) {
-		LOG_ERROR("Target not examined yet");
+	if (!target_memory_ready(target)) {
+		LOG_TARGET_ERROR(target, "Memory not ready");
 		return ERROR_FAIL;
 	}
 	if (!target->type->write_memory) {
-		LOG_ERROR("Target %s doesn't support write_memory", target_name(target));
+		LOG_TARGET_ERROR(target, "doesn't support write_memory");
 		return ERROR_FAIL;
 	}
 	return target->type->write_memory(target, address, size, count, buffer);
@@ -1289,12 +1297,12 @@ int target_write_memory(struct target *target,
 int target_write_phys_memory(struct target *target,
 		target_addr_t address, uint32_t size, uint32_t count, const uint8_t *buffer)
 {
-	if (!target_was_examined(target)) {
-		LOG_ERROR("Target not examined yet");
+	if (!target_memory_ready(target)) {
+		LOG_TARGET_ERROR(target, "Memory not ready");
 		return ERROR_FAIL;
 	}
 	if (!target->type->write_phys_memory) {
-		LOG_ERROR("Target %s doesn't support write_phys_memory", target_name(target));
+		LOG_TARGET_ERROR(target, "doesn't support write_phys_memory");
 		return ERROR_FAIL;
 	}
 	return target->type->write_phys_memory(target, address, size, count, buffer);
@@ -1360,9 +1368,9 @@ int target_hit_watchpoint(struct target *target,
 
 	if (!target->type->hit_watchpoint) {
 		/* For backward compatible, if hit_watchpoint is not implemented,
-		 * return ERROR_FAIL such that gdb_server will not take the nonsense
+		 * return error such that gdb_server will not take the nonsense
 		 * information. */
-		return ERROR_FAIL;
+		return ERROR_NOT_IMPLEMENTED;
 	}
 
 	return target->type->hit_watchpoint(target, hit_watchpoint);
@@ -1978,7 +1986,7 @@ int target_alloc_working_area_try(struct target *target, uint32_t size, struct w
 	/* Reevaluate working area address based on MMU state*/
 	if (!target->working_areas) {
 		int retval;
-		int enabled;
+		bool enabled;
 
 		retval = target->type->mmu(target, &enabled);
 		if (retval != ERROR_OK)
@@ -2353,8 +2361,8 @@ int target_write_buffer(struct target *target, target_addr_t address, uint32_t s
 	LOG_DEBUG("writing buffer of %" PRIu32 " byte at " TARGET_ADDR_FMT,
 			  size, address);
 
-	if (!target_was_examined(target)) {
-		LOG_ERROR("Target not examined yet");
+	if (!target_memory_ready(target)) {
+		LOG_TARGET_ERROR(target, "Memory not ready");
 		return ERROR_FAIL;
 	}
 
@@ -2418,8 +2426,8 @@ int target_read_buffer(struct target *target, target_addr_t address, uint32_t si
 	LOG_DEBUG("reading buffer of %" PRIu32 " byte at " TARGET_ADDR_FMT,
 			  size, address);
 
-	if (!target_was_examined(target)) {
-		LOG_ERROR("Target not examined yet");
+	if (!target_memory_ready(target)) {
+		LOG_TARGET_ERROR(target, "Memory not ready");
 		return ERROR_FAIL;
 	}
 
@@ -2475,51 +2483,38 @@ static int target_read_buffer_default(struct target *target, target_addr_t addre
 
 int target_checksum_memory(struct target *target, target_addr_t address, uint32_t size, uint32_t *crc)
 {
-	uint8_t *buffer;
 	int retval;
-	uint32_t i;
-	uint32_t checksum = 0;
 	if (!target_was_examined(target)) {
 		LOG_ERROR("Target not examined yet");
 		return ERROR_FAIL;
 	}
-	if (!target->type->checksum_memory) {
-		LOG_ERROR("Target %s doesn't support checksum_memory", target_name(target));
+
+	if (target->type->checksum_memory) {
+		retval = target->type->checksum_memory(target, address, size, crc);
+		if (retval == ERROR_OK)
+			return ERROR_OK;
+	} else {
+		LOG_TARGET_INFO(target, "doesn't support fast checksum_memory, using slow read memory");
+	}
+
+	uint8_t *buffer = malloc(size);
+	if (!buffer) {
+		LOG_ERROR("error allocating buffer for section (%" PRIu32 " bytes)", size);
 		return ERROR_FAIL;
 	}
 
-	retval = target->type->checksum_memory(target, address, size, &checksum);
-	if (retval != ERROR_OK) {
-		buffer = malloc(size);
-		if (!buffer) {
-			LOG_ERROR("error allocating buffer for section (%" PRIu32 " bytes)", size);
-			return ERROR_COMMAND_SYNTAX_ERROR;
-		}
-		retval = target_read_buffer(target, address, size, buffer);
-		if (retval != ERROR_OK) {
-			free(buffer);
-			return retval;
-		}
+	retval = target_read_buffer(target, address, size, buffer);
 
-		/* convert to target endianness */
-		for (i = 0; i < (size/sizeof(uint32_t)); i++) {
-			uint32_t target_data;
-			target_data = target_buffer_get_u32(target, &buffer[i*sizeof(uint32_t)]);
-			target_buffer_set_u32(target, &buffer[i*sizeof(uint32_t)], target_data);
-		}
+	if (retval == ERROR_OK)
+		retval = image_calculate_checksum(buffer, size, crc);
 
-		retval = image_calculate_checksum(buffer, size, &checksum);
-		free(buffer);
-	}
-
-	*crc = checksum;
-
+	free(buffer);
 	return retval;
 }
 
 int target_blank_check_memory(struct target *target,
-	struct target_memory_check_block *blocks, int num_blocks,
-	uint8_t erased_value)
+	struct target_memory_check_block *blocks, unsigned int num_blocks,
+	uint8_t erased_value, unsigned int *checked)
 {
 	if (!target_was_examined(target)) {
 		LOG_ERROR("Target not examined yet");
@@ -2529,22 +2524,19 @@ int target_blank_check_memory(struct target *target,
 	if (!target->type->blank_check_memory)
 		return ERROR_NOT_IMPLEMENTED;
 
-	return target->type->blank_check_memory(target, blocks, num_blocks, erased_value);
+	return target->type->blank_check_memory(target, blocks, num_blocks,
+			erased_value, checked);
 }
 
 int target_read_u64(struct target *target, target_addr_t address, uint64_t *value)
 {
 	uint8_t value_buf[8];
-	if (!target_was_examined(target)) {
-		LOG_ERROR("Target not examined yet");
-		return ERROR_FAIL;
-	}
 
 	int retval = target_read_memory(target, address, 8, 1, value_buf);
 
 	if (retval == ERROR_OK) {
 		*value = target_buffer_get_u64(target, value_buf);
-		LOG_DEBUG("address: " TARGET_ADDR_FMT ", value: 0x%16.16" PRIx64 "",
+		LOG_DEBUG("address: " TARGET_ADDR_FMT ", value: 0x%16.16" PRIx64,
 				  address,
 				  *value);
 	} else {
@@ -2559,16 +2551,12 @@ int target_read_u64(struct target *target, target_addr_t address, uint64_t *valu
 int target_read_u32(struct target *target, target_addr_t address, uint32_t *value)
 {
 	uint8_t value_buf[4];
-	if (!target_was_examined(target)) {
-		LOG_ERROR("Target not examined yet");
-		return ERROR_FAIL;
-	}
 
 	int retval = target_read_memory(target, address, 4, 1, value_buf);
 
 	if (retval == ERROR_OK) {
 		*value = target_buffer_get_u32(target, value_buf);
-		LOG_DEBUG("address: " TARGET_ADDR_FMT ", value: 0x%8.8" PRIx32 "",
+		LOG_DEBUG("address: " TARGET_ADDR_FMT ", value: 0x%8.8" PRIx32,
 				  address,
 				  *value);
 	} else {
@@ -2583,10 +2571,6 @@ int target_read_u32(struct target *target, target_addr_t address, uint32_t *valu
 int target_read_u16(struct target *target, target_addr_t address, uint16_t *value)
 {
 	uint8_t value_buf[2];
-	if (!target_was_examined(target)) {
-		LOG_ERROR("Target not examined yet");
-		return ERROR_FAIL;
-	}
 
 	int retval = target_read_memory(target, address, 2, 1, value_buf);
 
@@ -2606,11 +2590,6 @@ int target_read_u16(struct target *target, target_addr_t address, uint16_t *valu
 
 int target_read_u8(struct target *target, target_addr_t address, uint8_t *value)
 {
-	if (!target_was_examined(target)) {
-		LOG_ERROR("Target not examined yet");
-		return ERROR_FAIL;
-	}
-
 	int retval = target_read_memory(target, address, 1, 1, value);
 
 	if (retval == ERROR_OK) {
@@ -2630,12 +2609,8 @@ int target_write_u64(struct target *target, target_addr_t address, uint64_t valu
 {
 	int retval;
 	uint8_t value_buf[8];
-	if (!target_was_examined(target)) {
-		LOG_ERROR("Target not examined yet");
-		return ERROR_FAIL;
-	}
 
-	LOG_DEBUG("address: " TARGET_ADDR_FMT ", value: 0x%16.16" PRIx64 "",
+	LOG_DEBUG("address: " TARGET_ADDR_FMT ", value: 0x%16.16" PRIx64,
 			  address,
 			  value);
 
@@ -2651,12 +2626,8 @@ int target_write_u32(struct target *target, target_addr_t address, uint32_t valu
 {
 	int retval;
 	uint8_t value_buf[4];
-	if (!target_was_examined(target)) {
-		LOG_ERROR("Target not examined yet");
-		return ERROR_FAIL;
-	}
 
-	LOG_DEBUG("address: " TARGET_ADDR_FMT ", value: 0x%8.8" PRIx32 "",
+	LOG_DEBUG("address: " TARGET_ADDR_FMT ", value: 0x%8.8" PRIx32,
 			  address,
 			  value);
 
@@ -2672,10 +2643,6 @@ int target_write_u16(struct target *target, target_addr_t address, uint16_t valu
 {
 	int retval;
 	uint8_t value_buf[2];
-	if (!target_was_examined(target)) {
-		LOG_ERROR("Target not examined yet");
-		return ERROR_FAIL;
-	}
 
 	LOG_DEBUG("address: " TARGET_ADDR_FMT ", value: 0x%8.8" PRIx16,
 			  address,
@@ -2692,10 +2659,6 @@ int target_write_u16(struct target *target, target_addr_t address, uint16_t valu
 int target_write_u8(struct target *target, target_addr_t address, uint8_t value)
 {
 	int retval;
-	if (!target_was_examined(target)) {
-		LOG_ERROR("Target not examined yet");
-		return ERROR_FAIL;
-	}
 
 	LOG_DEBUG("address: " TARGET_ADDR_FMT ", value: 0x%2.2" PRIx8,
 			  address, value);
@@ -2711,12 +2674,8 @@ int target_write_phys_u64(struct target *target, target_addr_t address, uint64_t
 {
 	int retval;
 	uint8_t value_buf[8];
-	if (!target_was_examined(target)) {
-		LOG_ERROR("Target not examined yet");
-		return ERROR_FAIL;
-	}
 
-	LOG_DEBUG("address: " TARGET_ADDR_FMT ", value: 0x%16.16" PRIx64 "",
+	LOG_DEBUG("address: " TARGET_ADDR_FMT ", value: 0x%16.16" PRIx64,
 			  address,
 			  value);
 
@@ -2732,12 +2691,8 @@ int target_write_phys_u32(struct target *target, target_addr_t address, uint32_t
 {
 	int retval;
 	uint8_t value_buf[4];
-	if (!target_was_examined(target)) {
-		LOG_ERROR("Target not examined yet");
-		return ERROR_FAIL;
-	}
 
-	LOG_DEBUG("address: " TARGET_ADDR_FMT ", value: 0x%8.8" PRIx32 "",
+	LOG_DEBUG("address: " TARGET_ADDR_FMT ", value: 0x%8.8" PRIx32,
 			  address,
 			  value);
 
@@ -2753,10 +2708,6 @@ int target_write_phys_u16(struct target *target, target_addr_t address, uint16_t
 {
 	int retval;
 	uint8_t value_buf[2];
-	if (!target_was_examined(target)) {
-		LOG_ERROR("Target not examined yet");
-		return ERROR_FAIL;
-	}
 
 	LOG_DEBUG("address: " TARGET_ADDR_FMT ", value: 0x%8.8" PRIx16,
 			  address,
@@ -2773,10 +2724,6 @@ int target_write_phys_u16(struct target *target, target_addr_t address, uint16_t
 int target_write_phys_u8(struct target *target, target_addr_t address, uint8_t value)
 {
 	int retval;
-	if (!target_was_examined(target)) {
-		LOG_ERROR("Target not examined yet");
-		return ERROR_FAIL;
-	}
 
 	LOG_DEBUG("address: " TARGET_ADDR_FMT ", value: 0x%2.2" PRIx8,
 			  address, value);
@@ -3216,8 +3163,6 @@ COMMAND_HANDLER(handle_wait_halt_command)
 /* wait for target state to change. The trick here is to have a low
  * latency for short waits and not to suck up all the CPU time
  * on longer waits.
- *
- * After 500ms, keep_alive() is invoked
  */
 int target_wait_state(struct target *target, enum target_state state, unsigned int ms)
 {
@@ -3239,11 +3184,9 @@ int target_wait_state(struct target *target, enum target_state state, unsigned i
 				nvp_value2name(nvp_target_state, state)->name);
 		}
 
-		if (cur - then > 500) {
-			keep_alive();
-			if (openocd_is_shutdown_pending())
-				return ERROR_SERVER_INTERRUPTED;
-		}
+		keep_alive();
+		if (openocd_is_shutdown_pending())
+			return ERROR_SERVER_INTERRUPTED;
 
 		if ((cur-then) > ms) {
 			LOG_ERROR("timed out while waiting for target %s",
@@ -3353,7 +3296,7 @@ COMMAND_HANDLER(handle_step_command)
 
 void target_handle_md_output(struct command_invocation *cmd,
 		struct target *target, target_addr_t address, unsigned int size,
-		unsigned int count, const uint8_t *buffer)
+		unsigned int count, const uint8_t *buffer, bool include_address)
 {
 	const unsigned int line_bytecnt = 32;
 	unsigned int line_modulo = line_bytecnt / size;
@@ -3382,7 +3325,7 @@ void target_handle_md_output(struct command_invocation *cmd,
 	}
 
 	for (unsigned int i = 0; i < count; i++) {
-		if (i % line_modulo == 0) {
+		if (include_address && i % line_modulo == 0) {
 			output_len += snprintf(output + output_len,
 					sizeof(output) - output_len,
 					TARGET_ADDR_FMT ": ",
@@ -3466,7 +3409,7 @@ COMMAND_HANDLER(handle_md_command)
 	struct target *target = get_current_target(CMD_CTX);
 	int retval = fn(target, address, size, count, buffer);
 	if (retval == ERROR_OK)
-		target_handle_md_output(CMD, target, address, size, count, buffer);
+		target_handle_md_output(CMD, target, address, size, count, buffer, true);
 
 	free(buffer);
 
@@ -3565,20 +3508,20 @@ COMMAND_HANDLER(handle_mw_command)
 	struct target *target = get_current_target(CMD_CTX);
 	unsigned int wordsize;
 	switch (CMD_NAME[2]) {
-		case 'd':
-			wordsize = 8;
-			break;
-		case 'w':
-			wordsize = 4;
-			break;
-		case 'h':
-			wordsize = 2;
-			break;
-		case 'b':
-			wordsize = 1;
-			break;
-		default:
-			return ERROR_COMMAND_SYNTAX_ERROR;
+	case 'd':
+		wordsize = 8;
+		break;
+	case 'w':
+		wordsize = 4;
+		break;
+	case 'h':
+		wordsize = 2;
+		break;
+	case 'b':
+		wordsize = 1;
+		break;
+	default:
+		return ERROR_COMMAND_SYNTAX_ERROR;
 	}
 
 	return target_fill_mem(target, address, fn, wordsize, value, count);
@@ -3977,7 +3920,7 @@ static int handle_bp_command_set(struct command_invocation *cmd,
 		retval = context_breakpoint_add(target, asid, length, hw);
 		/* error is always logged in context_breakpoint_add(), do not print it again */
 		if (retval == ERROR_OK)
-			command_print(cmd, "Context breakpoint set at 0x%8.8" PRIx32 "", asid);
+			command_print(cmd, "Context breakpoint set at 0x%8.8" PRIx32, asid);
 
 	} else {
 		if (!target->type->add_hybrid_breakpoint) {
@@ -3987,7 +3930,7 @@ static int handle_bp_command_set(struct command_invocation *cmd,
 		retval = hybrid_breakpoint_add(target, addr, asid, length, hw);
 		/* error is always logged in hybrid_breakpoint_add(), do not print it again */
 		if (retval == ERROR_OK)
-			command_print(cmd, "Hybrid breakpoint set at 0x%8.8" PRIx32 "", asid);
+			command_print(cmd, "Hybrid breakpoint set at 0x%8.8" PRIx32, asid);
 	}
 	return retval;
 }
@@ -4000,39 +3943,39 @@ COMMAND_HANDLER(handle_bp_command)
 	int hw = BKPT_SOFT;
 
 	switch (CMD_ARGC) {
-		case 0:
-			return handle_bp_command_list(CMD);
+	case 0:
+		return handle_bp_command_list(CMD);
 
-		case 2:
-			asid = 0;
-			COMMAND_PARSE_ADDRESS(CMD_ARGV[0], addr);
-			COMMAND_PARSE_NUMBER(u32, CMD_ARGV[1], length);
-			return handle_bp_command_set(CMD, addr, asid, length, hw);
+	case 2:
+		asid = 0;
+		COMMAND_PARSE_ADDRESS(CMD_ARGV[0], addr);
+		COMMAND_PARSE_NUMBER(u32, CMD_ARGV[1], length);
+		return handle_bp_command_set(CMD, addr, asid, length, hw);
 
-		case 3:
-			if (strcmp(CMD_ARGV[2], "hw") == 0) {
-				hw = BKPT_HARD;
-				COMMAND_PARSE_ADDRESS(CMD_ARGV[0], addr);
-				COMMAND_PARSE_NUMBER(u32, CMD_ARGV[1], length);
-				asid = 0;
-				return handle_bp_command_set(CMD, addr, asid, length, hw);
-			} else if (strcmp(CMD_ARGV[2], "hw_ctx") == 0) {
-				hw = BKPT_HARD;
-				COMMAND_PARSE_NUMBER(u32, CMD_ARGV[0], asid);
-				COMMAND_PARSE_NUMBER(u32, CMD_ARGV[1], length);
-				addr = 0;
-				return handle_bp_command_set(CMD, addr, asid, length, hw);
-			}
-			/* fallthrough */
-		case 4:
+	case 3:
+		if (strcmp(CMD_ARGV[2], "hw") == 0) {
 			hw = BKPT_HARD;
 			COMMAND_PARSE_ADDRESS(CMD_ARGV[0], addr);
-			COMMAND_PARSE_NUMBER(u32, CMD_ARGV[1], asid);
-			COMMAND_PARSE_NUMBER(u32, CMD_ARGV[2], length);
+			COMMAND_PARSE_NUMBER(u32, CMD_ARGV[1], length);
+			asid = 0;
 			return handle_bp_command_set(CMD, addr, asid, length, hw);
+		} else if (strcmp(CMD_ARGV[2], "hw_ctx") == 0) {
+			hw = BKPT_HARD;
+			COMMAND_PARSE_NUMBER(u32, CMD_ARGV[0], asid);
+			COMMAND_PARSE_NUMBER(u32, CMD_ARGV[1], length);
+			addr = 0;
+			return handle_bp_command_set(CMD, addr, asid, length, hw);
+		}
+		/* fallthrough */
+	case 4:
+		hw = BKPT_HARD;
+		COMMAND_PARSE_ADDRESS(CMD_ARGV[0], addr);
+		COMMAND_PARSE_NUMBER(u32, CMD_ARGV[1], asid);
+		COMMAND_PARSE_NUMBER(u32, CMD_ARGV[2], length);
+		return handle_bp_command_set(CMD, addr, asid, length, hw);
 
-		default:
-			return ERROR_COMMAND_SYNTAX_ERROR;
+	default:
+		return ERROR_COMMAND_SYNTAX_ERROR;
 	}
 }
 
@@ -4667,11 +4610,18 @@ COMMAND_HANDLER(handle_target_write_memory)
  */
 void target_handle_event(struct target *target, enum target_event e)
 {
-	struct target_event_action *teap;
+	struct target_event_action *teap, *tmp;
 	int retval;
 
-	list_for_each_entry(teap, &target->events_action, list) {
+	list_for_each_entry_safe(teap, tmp, &target->events_action, list) {
 		if (teap->event == e) {
+			/*
+			 * The event can be destroyed by its own handler.
+			 * Make a local copy and use it in place of the original.
+			 */
+			struct target_event_action local_teap = *teap;
+			teap = &local_teap;
+
 			LOG_DEBUG("target: %s (%s) event: %d (%s) action: %s",
 					   target_name(target),
 					   target_type_name(target),
@@ -4687,7 +4637,13 @@ void target_handle_event(struct target *target, enum target_event e)
 			struct target *saved_target_override = cmd_ctx->current_target_override;
 			cmd_ctx->current_target_override = target;
 
+			/*
+			 * The event can be destroyed by its own handler.
+			 * Prevent the body to get deallocated by Jim.
+			 */
+			Jim_IncrRefCount(teap->body);
 			retval = Jim_EvalObj(teap->interp, teap->body);
+			Jim_DecrRefCount(teap->interp, teap->body);
 
 			cmd_ctx->current_target_override = saved_target_override;
 
@@ -4736,7 +4692,7 @@ COMMAND_HANDLER(handle_target_get_reg)
 
 		const char *reg_name = Jim_String(elem);
 
-		struct reg *reg = register_get_by_name(target->reg_cache, reg_name, false);
+		struct reg *reg = register_get_by_name(target->reg_cache, reg_name, true);
 
 		if (!reg || !reg->exist) {
 			command_print(CMD, "unknown register '%s'", reg_name);
@@ -4794,7 +4750,7 @@ COMMAND_HANDLER(handle_set_reg_command)
 	for (unsigned int i = 0; i < length; i += 2) {
 		const char *reg_name = Jim_String(dict[i]);
 		const char *reg_value = Jim_String(dict[i + 1]);
-		struct reg *reg = register_get_by_name(target->reg_cache, reg_name, false);
+		struct reg *reg = register_get_by_name(target->reg_cache, reg_name, true);
 
 		if (!reg || !reg->exist) {
 			command_print(CMD, "unknown register '%s'", reg_name);
@@ -5707,7 +5663,6 @@ static const struct command_registration target_instance_command_handlers[] = {
 COMMAND_HANDLER(handle_target_create)
 {
 	int retval = ERROR_OK;
-	int x;
 
 	if (CMD_ARGC < 2)
 		return ERROR_COMMAND_SYNTAX_ERROR;
@@ -5731,15 +5686,16 @@ COMMAND_HANDLER(handle_target_create)
 		LOG_INFO("The selected transport took over low-level target control. The results might differ compared to plain JTAG/SWD");
 	}
 	/* now does target type exist */
-	for (x = 0 ; target_types[x] ; x++) {
+	size_t x;
+	for (x = 0 ; x < ARRAY_SIZE(target_types) ; x++) {
 		if (strcmp(cp, target_types[x]->name) == 0) {
 			/* found */
 			break;
 		}
 	}
-	if (!target_types[x]) {
+	if (x == ARRAY_SIZE(target_types)) {
 		char *all = NULL;
-		for (x = 0 ; target_types[x] ; x++) {
+		for (x = 0 ; x < ARRAY_SIZE(target_types) ; x++) {
 			char *prev = all;
 			if (all)
 				all = alloc_printf("%s, %s", all, target_types[x]->name);
@@ -5941,7 +5897,7 @@ COMMAND_HANDLER(handle_target_types)
 	if (CMD_ARGC != 0)
 		return ERROR_COMMAND_SYNTAX_ERROR;
 
-	for (unsigned int x = 0; target_types[x]; x++)
+	for (size_t x = 0; x < ARRAY_SIZE(target_types); x++)
 		command_print(CMD, "%s", target_types[x]->name);
 
 	return ERROR_OK;
@@ -6776,25 +6732,25 @@ static int target_register_user_commands(struct command_context *cmd_ctx)
 const char *target_debug_reason_str(enum target_debug_reason reason)
 {
 	switch (reason) {
-		case DBG_REASON_DBGRQ:
-			return "DBGRQ";
-		case DBG_REASON_BREAKPOINT:
-			return "BREAKPOINT";
-		case DBG_REASON_WATCHPOINT:
-			return "WATCHPOINT";
-		case DBG_REASON_WPTANDBKPT:
-			return "WPTANDBKPT";
-		case DBG_REASON_SINGLESTEP:
-			return "SINGLESTEP";
-		case DBG_REASON_NOTHALTED:
-			return "NOTHALTED";
-		case DBG_REASON_EXIT:
-			return "EXIT";
-		case DBG_REASON_EXC_CATCH:
-			return "EXC_CATCH";
-		case DBG_REASON_UNDEFINED:
-			return "UNDEFINED";
-		default:
-			return "UNKNOWN!";
+	case DBG_REASON_DBGRQ:
+		return "DBGRQ";
+	case DBG_REASON_BREAKPOINT:
+		return "BREAKPOINT";
+	case DBG_REASON_WATCHPOINT:
+		return "WATCHPOINT";
+	case DBG_REASON_WPTANDBKPT:
+		return "WPTANDBKPT";
+	case DBG_REASON_SINGLESTEP:
+		return "SINGLESTEP";
+	case DBG_REASON_NOTHALTED:
+		return "NOTHALTED";
+	case DBG_REASON_EXIT:
+		return "EXIT";
+	case DBG_REASON_EXC_CATCH:
+		return "EXC_CATCH";
+	case DBG_REASON_UNDEFINED:
+		return "UNDEFINED";
+	default:
+		return "UNKNOWN!";
 	}
 }

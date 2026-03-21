@@ -539,7 +539,7 @@ static int ecos_check_app_info(struct rtos *rtos, struct ecos_params *param)
 		return -1;
 
 	if (param->flush_common) {
-		if (debug_level >= LOG_LVL_DEBUG) {
+		if (LOG_LEVEL_IS(LOG_LVL_DEBUG)) {
 			for (unsigned int idx = 0; idx < ARRAY_SIZE(ecos_symbol_list); idx++) {
 				LOG_DEBUG("eCos: %s 0x%016" PRIX64 " %s",
 					rtos->symbols[idx].optional ? "OPTIONAL" : "        ",
@@ -1004,7 +1004,7 @@ static int ecos_update_threads(struct rtos *rtos)
 		if (tr_extra && reason_desc)
 			soff += snprintf(&eistr[soff], (eilen - soff), " (%s)", reason_desc);
 		if (pri_extra)
-			(void)snprintf(&eistr[soff], (eilen - soff), ", Priority: %" PRId64 "", priority);
+			(void)snprintf(&eistr[soff], (eilen - soff), ", Priority: %" PRId64, priority);
 		rtos->thread_details[tasks_found].extra_info_str = eistr;
 
 		rtos->thread_details[tasks_found].exists = true;
@@ -1073,7 +1073,7 @@ static int ecos_get_thread_reg_list(struct rtos *rtos, int64_t thread_id,
 				param->uid_width,
 				(uint8_t *)&id);
 		if (retval != ERROR_OK) {
-			LOG_ERROR("Error reading unique id from eCos thread 0x%08" PRIX32 "", thread_index);
+			LOG_ERROR("Error reading unique id from eCos thread 0x%08" PRIX32, thread_index);
 			return retval;
 		}
 

@@ -591,6 +591,15 @@ int target_run_read_async_algorithm(struct target *target,
 		void *arch_info);
 
 /**
+ * Returns true if target memory is ready to read/write.
+ *
+ * This routine is a wrapper for target->type->memory_ready.
+ * If the target specific check is not implemented,
+ * returns target_was_examined()
+ */
+bool target_memory_ready(struct target *target);
+
+/**
  * Read @a count items of @a size bytes from the memory of @a target at
  * the @a address given.
  *
@@ -653,8 +662,8 @@ int target_read_buffer(struct target *target,
 int target_checksum_memory(struct target *target,
 		target_addr_t address, uint32_t size, uint32_t *crc);
 int target_blank_check_memory(struct target *target,
-		struct target_memory_check_block *blocks, int num_blocks,
-		uint8_t erased_value);
+		struct target_memory_check_block *blocks, unsigned int num_blocks,
+		uint8_t erased_value, unsigned int *checked);
 int target_wait_state(struct target *target, enum target_state state, unsigned int ms);
 
 /**
@@ -775,7 +784,7 @@ void target_handle_event(struct target *t, enum target_event e);
 
 void target_handle_md_output(struct command_invocation *cmd,
 	struct target *target, target_addr_t address, unsigned int size,
-	unsigned int count, const uint8_t *buffer);
+	unsigned int count, const uint8_t *buffer, bool include_address);
 
 int target_profiling_default(struct target *target, uint32_t *samples, uint32_t
 		max_num_samples, uint32_t *num_samples, uint32_t seconds);
@@ -796,6 +805,7 @@ int target_profiling_default(struct target *target, uint32_t *samples, uint32_t
 #define ERROR_TARGET_SIZE_NOT_SUPPORTED  (-314)
 #define ERROR_TARGET_PACKING_NOT_SUPPORTED  (-315)
 #define ERROR_TARGET_HALTED_DO_RESUME  (-316)	/* used to workaround incorrect debug halt */
+#define ERROR_TARGET_INTERSECT_BREAKPOINT (-317)
 
 extern bool get_target_reset_nag(void);
 

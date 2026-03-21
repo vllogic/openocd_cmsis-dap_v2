@@ -112,6 +112,12 @@ struct target_type {
 	*/
 
 	/**
+	 * Returns true if target memory is read to read/write.
+	 * Do @b not call this function
+	 * directly, use target_memory_ready() instead.
+	 */
+	bool (*memory_ready)(struct target *target);
+	/**
 	 * Target memory read callback.  Do @b not call this function
 	 * directly, use target_read_memory() instead.
 	 */
@@ -135,8 +141,8 @@ struct target_type {
 	int (*checksum_memory)(struct target *target, target_addr_t address,
 			uint32_t count, uint32_t *checksum);
 	int (*blank_check_memory)(struct target *target,
-			struct target_memory_check_block *blocks, int num_blocks,
-			uint8_t erased_value);
+			struct target_memory_check_block *blocks, unsigned int num_blocks,
+			uint8_t erased_value, unsigned int *checked);
 
 	/*
 	 * target break-/watchpoint control
@@ -264,7 +270,7 @@ struct target_type {
 	int (*write_phys_memory)(struct target *target, target_addr_t phys_address,
 			uint32_t size, uint32_t count, const uint8_t *buffer);
 
-	int (*mmu)(struct target *target, int *enabled);
+	int (*mmu)(struct target *target, bool *enabled);
 
 	/* after reset is complete, the target can check if things are properly set up.
 	 *
@@ -307,6 +313,7 @@ struct target_type {
 	unsigned int (*data_bits)(struct target *target);
 };
 
+// Keep in alphabetic order this list of targets
 extern struct target_type aarch64_target;
 extern struct target_type arcv2_target;
 extern struct target_type arm11_target;
