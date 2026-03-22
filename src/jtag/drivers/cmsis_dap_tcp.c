@@ -223,11 +223,13 @@ static int socket_bytes_available(int sock, unsigned int *out_avail)
 	return 0;
 }
 
+#if 0
 static inline int readall_socket(int handle, void *buffer, unsigned int count)
 {
 	// Return after all count bytes available, or timeout, or error.
 	return recv(handle, buffer, count, MSG_WAITALL);
 }
+#endif
 
 static int peekall_socket(int handle, void *buffer, unsigned int count,
 		enum cmsis_dap_blocking blocking, unsigned int timeout_ms)
@@ -388,6 +390,7 @@ static int cmsis_dap_tcp_read(struct cmsis_dap *dap, int transfer_timeout_ms,
 	// Read the complete packet.
 	int read_len = HEADER_SIZE + header.length;
 	LOG_DEBUG_IO("Reading %d bytes (%d payload)...", read_len, header.length);
+#if 0
 	retval = readall_socket(dap->bdata->sockfd, dap->packet_buffer, read_len);
 
 	if (retval == 0) {
@@ -404,6 +407,41 @@ static int cmsis_dap_tcp_read(struct cmsis_dap *dap, int transfer_timeout_ms,
 		log_socket_error("read_socket short read");
 		return ERROR_FAIL;
 	}
+#else
+    int received = 0;
+    while (received < read_len) {
+        int ret = recv(dap->bdata->sockfd, (char*)dap->packet_buffer + received, read_len - received, 0);
+        
+        if (ret > 0) {
+            received += ret;
+        } else if (ret == 0) {
+            LOG_ERROR("CMSIS-DAP: connection closed by peer");
+            return ERROR_FAIL;
+        } else {
+            int cur_err;
+#ifdef _WIN32
+            cur_err = WSAGetLastError();
+#else
+            cur_err = errno;
+#endif
+            // 如果是非阻塞导致的暂无数据，或者是被信号打断，我们必须死等！
+            // 因为头已经读了，TCP流绝不能在这里断开，否则下一个包必乱。
+            if (cur_err == EAGAIN || cur_err == EWOULDBLOCK || cur_err == EINTR) {
+                // 稍微让出 CPU，继续等
+                #ifdef _WIN32
+                Sleep(1);
+                #else
+                usleep(1000);
+                #endif
+                continue;
+            }
+            
+            LOG_ERROR("CMSIS-DAP: TCP stream corrupted or fatal error (err=%d)", cur_err);
+            return ERROR_FAIL;
+        }
+    }
+    retval = received;
+#endif
 	return retval;
 }
 
