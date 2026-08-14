@@ -65,6 +65,7 @@ NOR_DRIVERS = \
 	%D%/psoc4.c \
 	%D%/psoc5lp.c \
 	%D%/psoc6.c \
+	%D%/puyaf0x.c \
 	%D%/qn908x.c \
 	%D%/read_only.c \
 	%D%/renesas_rpchf.c \
